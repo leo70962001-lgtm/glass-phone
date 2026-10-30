@@ -1,0 +1,59 @@
+html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: none; }
+body {
+  background: #1a1a1e;
+  font-family: "Segoe UI", "PingFang TC", "Microsoft JhengHei", sans-serif;
+  -webkit-user-select: none; user-select: none; -webkit-touch-callout: none;
+}
+#c { position: fixed; top: 0; left: 0; width: 100%; height: 100%; display: block; touch-action: none; }
+/* 量安全區（瀏海、Home 條）用 */
+#safe {
+  position: fixed; visibility: hidden; pointer-events: none;
+  padding-top: env(safe-area-inset-top); padding-bottom: env(safe-area-inset-bottom);
+}
+#gear {
+  position: fixed; top: calc(env(safe-area-inset-top) + 6px); right: 10px; z-index: 10;
+  width: 34px; height: 34px; border-radius: 50%; border: 1px solid rgba(255,255,255,.35);
+  background: rgba(255,255,255,.18); color: #fff; font-size: 18px; line-height: 1;
+  -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px);
+  display: none;
+}
+/* 編輯模式：刪除鈕、完成、還原 */
+#badges { position: fixed; inset: 0; pointer-events: none; z-index: 5; }
+.del {
+  position: fixed; left: 0; top: 0; width: 24px; height: 24px; padding: 0; border-radius: 50%;
+  border: none; background: rgba(70, 70, 78, .72); color: #fff; font: 600 20px/22px -apple-system, "Segoe UI", sans-serif;
+  -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px); box-shadow: 0 1px 4px rgba(0,0,0,.3);
+  pointer-events: auto; touch-action: none;
+}
+.del[hidden], .pill[hidden] { display: none; }
+.pill {
+  position: fixed; top: calc(env(safe-area-inset-top) + 8px); z-index: 10; display: none;
+  padding: 5px 14px; border-radius: 16px; border: none; color: #fff; font: 600 15px -apple-system, "Segoe UI", sans-serif;
+  background: rgba(255,255,255,.25); -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px);
+}
+#done { right: 12px; }
+#restore { left: 12px; }
+body.editing #done, body.editing #restore:not([hidden]) { display: block; }
+body.editing #gear { display: none !important; }
+#reset {
+  position: fixed; z-index: 10; transform: translate(-50%, -50%);
+  padding: 10px 22px; border-radius: 22px; border: 1px solid rgba(255,255,255,.55); color: #fff;
+  font: 600 16px -apple-system, "Segoe UI", "PingFang TC", sans-serif; letter-spacing: .04em;
+  background: rgba(255,255,255,.22); -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px);
+  box-shadow: 0 6px 20px rgba(0,0,0,.18), inset 0 1px 0 rgba(255,255,255,.6);
+}
+#reset[hidden] { display: none; }
+#hint {
+  position: fixed; left: 16px; bottom: 14px; font-size: 12px; color: #8a8a94;
+  letter-spacing: .04em; pointer-events: none;
+}
+.lil-gui.root { --width: 300px; }
+@media (pointer: coarse) {
+  #gear { display: block; }
+  #hint { display: none; }
+  /* 手機：面板改成底部抽屜 */
+  .lil-gui.root.autoPlace {
+    top: auto; bottom: 0; left: 0; right: 0; width: 100%; max-height: 52vh; overflow-y: auto;
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+}

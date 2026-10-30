@@ -1,0 +1,7 @@
+# 本機用：自簽憑證（含私鑰）、截圖、ComfyUI 中間檔、參考圖、預覽設定
+tools/cert/
+tools/shots/
+tools/comfy/*.png
+refs/
+.claude/
+node_modules/
