@@ -2,6 +2,8 @@
 // (token from Git Credential Manager via `git credential fill`; never printed), push main and make sure
 // GitHub Pages serves the main branch root. No build step: the site is the repo root as-is.
 import { execSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
+import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -22,7 +24,18 @@ async function api(token, method, url, body) {
   return { status: r.status, j };
 }
 
+// index.html 裡所有 ?v= 換成 js/ + style.css 的內容雜湊（Pages 快取 10 分鐘，避免新舊模組混用）
+function stamp() {
+  const file = path.join(ROOT, 'index.html');
+  const h = createHash('sha1');
+  for (const f of ['style.css', ...fs.readdirSync(path.join(ROOT, 'js')).sort().map((n) => 'js/' + n)]) h.update(fs.readFileSync(path.join(ROOT, f)));
+  const v = h.digest('hex').slice(0, 10);
+  fs.writeFileSync(file, fs.readFileSync(file, 'utf8').replace(/\?v=[\w-]+/g, '?v=' + v));
+  return v;
+}
+
 try {
+  console.log('version', stamp());
   try { sh('git rev-parse --is-inside-work-tree'); } catch { sh('git init -b main'); }
   // author: reuse what the other published projects use, else the GitHub login with a noreply address
   const { username, password } = credential();

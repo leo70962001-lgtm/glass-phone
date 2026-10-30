@@ -11,12 +11,18 @@
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="apple-touch-icon" href="assets/icon-180.png">
 <title>玻璃主畫面</title>
-<link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="style.css?v=f40dff7055">
+<!-- ?v= 由 tools/publish.js 換成內容雜湊：GitHub Pages 會快取 10 分鐘，版本號讓手機一定拿到同一版的所有模組 -->
 <script type="importmap">
 {
   "imports": {
     "three": "https://cdn.jsdelivr.net/npm/three@0.180.0/build/three.module.js",
-    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/"
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/",
+    "./js/dust.js": "./js/dust.js?v=f40dff7055",
+    "./js/glass.js": "./js/glass.js?v=f40dff7055",
+    "./js/glyphs.js": "./js/glyphs.js?v=f40dff7055",
+    "./js/layout.js": "./js/layout.js?v=f40dff7055",
+    "./js/screen.js": "./js/screen.js?v=f40dff7055"
   }
 }
 </script>
@@ -31,6 +37,6 @@
 <button id="reset" hidden>重設主畫面</button>
 <div id="hint">滑鼠移動 = 視差傾斜　長按 = 編輯／刪除</div>
 <input id="file" type="file" accept="image/*,video/*" hidden>
-<script type="module" src="js/main.js"></script>
+<script type="module" src="js/main.js?v=f40dff7055"></script>
 </body>
 </html>
