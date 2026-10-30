@@ -19,7 +19,8 @@ const DEFAULTS = {
   caustic: 1.0, rainbow: 0.6, star: 0.5,
   refl: 1.0, rim: 1.0, spec: 1.0, env: 1.0,
   trayThickness: 4,
-  parallax: true, tiltAmt: 14, viewDist: 4.5, sway: false,
+  parallax: true, tiltAmt: 18, viewDist: 4.5, sway: false,
+  gyroGain: 1.4, gyroRecenter: 0.25, wallDepth: 0.3, glintGain: 2.2, lightGain: 1.15,
   wallpaper: 'flow', animateWall: !matchMedia('(prefers-reduced-motion: reduce)').matches,
   quality: MOBILE ? 'low' : 'high', maxDpr: Math.min(devicePixelRatio, 2),
   dustDensity: 2.6, dustSweep: 0.9, dustLife: 1.3, dustWind: 55, dustTint: '#d6b4ff', dustTintAmt: 0.55,
@@ -272,8 +273,15 @@ const fView = gui.addFolder('體感視差');
 fView.add(P, 'parallax').name(MOBILE ? '陀螺儀／拖曳視差' : '滑鼠視差');
 fView.add(P, 'tiltAmt', 0, 30, 0.5).name('視差角度°');
 fView.add(P, 'viewDist', 1.2, 8, 0.1).name('觀看距離（越小越立體）').onChange(() => (needsRender = true));
+fView.add(P, 'gyroGain', 0.3, 3, 0.05).name('陀螺儀靈敏度');
+fView.add(P, 'gyroRecenter', 0, 2, 0.05).name('回正速度（0 = 不回正）');
+fView.add(P, 'wallDepth', 0, 1, 0.01).name('桌布景深視差').onChange(() => (needsRender = true));
+fView.add(P, 'glintGain', 0, 4, 0.05).name('反光跟著傾斜').onChange(() => (needsRender = true));
+fView.add(P, 'lightGain', 0, 4, 0.05).name('陰影焦散跟著傾斜').onChange(() => (needsRender = true));
 fView.add(P, 'sway').name('自動擺動');
 fView.add({ 重新校正: () => (gyroBase = null) }, '重新校正');
+const gyroCtl = fView.add({ s: '未偵測到' }, 's').name('陀螺儀狀態').disable();
+if (typeof DeviceOrientationEvent !== 'undefined' && DeviceOrientationEvent.requestPermission) fView.add({ 啟用陀螺儀: () => askGyro() }, '啟用陀螺儀');
 
 const fWall = gui.addFolder('桌布');
 const wallCtl = fWall.add(P, 'wallpaper', { ...wallOptions, '上傳圖片／影片…': 'upload' }).name('桌布').onChange(setWallpaper);
@@ -300,7 +308,8 @@ document.getElementById('gear').addEventListener('click', () => (gui._hidden ? g
 
 function applyPreset(name) {
   const keep = { wallpaper: P.wallpaper, parallax: P.parallax, sway: P.sway, animateWall: P.animateWall, quality: P.quality, maxDpr: P.maxDpr, tiltAmt: P.tiltAmt, viewDist: P.viewDist,
-    dustDensity: P.dustDensity, dustSweep: P.dustSweep, dustLife: P.dustLife, dustWind: P.dustWind, dustTint: P.dustTint, dustTintAmt: P.dustTintAmt };
+    dustDensity: P.dustDensity, dustSweep: P.dustSweep, dustLife: P.dustLife, dustWind: P.dustWind, dustTint: P.dustTint, dustTintAmt: P.dustTintAmt,
+    gyroGain: P.gyroGain, gyroRecenter: P.gyroRecenter, wallDepth: P.wallDepth, glintGain: P.glintGain, lightGain: P.lightGain };
   Object.assign(P, DEFAULTS, name ? PRESETS[name] : {}, keep);
   gui.controllersRecursive().forEach((c) => c.updateDisplay());
   sync();
@@ -318,26 +327,37 @@ fetch('assets/wallpapers.json').then((r) => (r.ok ? r.json() : [])).then((list) 
 
 // ---------- 視差：陀螺儀／滑鼠／拖曳 → 眼睛相對螢幕的位置 ----------
 const tiltTarget = new THREE.Vector2(), tilt = new THREE.Vector2();
-let gyroBase = null, gyroOn = false;
+let gyroBase = null, gyroOn = false, gyroT = 0, gyroShown = 0;
 addEventListener('deviceorientation', (e) => {
   if (!MOBILE || e.beta == null) return;
   gyroOn = true;
+  const now = performance.now(), dt = gyroT ? Math.min((now - gyroT) / 1000, 0.2) : 0;
+  gyroT = now;
   const cur = { b: e.beta, g: e.gamma };
   if (!gyroBase) gyroBase = { ...cur };
-  // 基準慢慢跟上目前握姿：只對「動作」有反應，放著會回正
-  gyroBase.b += (cur.b - gyroBase.b) * 0.015;
-  gyroBase.g += (cur.g - gyroBase.g) * 0.015;
-  const lim = THREE.MathUtils.degToRad(P.tiltAmt * 1.5);
-  tiltTarget.set(
-    THREE.MathUtils.clamp(THREE.MathUtils.degToRad(cur.g - gyroBase.g), -lim, lim),
-    THREE.MathUtils.clamp(THREE.MathUtils.degToRad(cur.b - gyroBase.b), -lim, lim));
+  // 基準慢慢跟上目前握姿：只對「動作」有反應，拿著不動會在幾秒內回正（回正速度 = 每秒比例）
+  const f = 1 - Math.exp(-dt * P.gyroRecenter);
+  gyroBase.b += (cur.b - gyroBase.b) * f;
+  gyroBase.g += (cur.g - gyroBase.g) * f;
+  const lim = THREE.MathUtils.degToRad(P.tiltAmt);
+  const k = THREE.MathUtils.degToRad(P.gyroGain);
+  tiltTarget.set(THREE.MathUtils.clamp((cur.g - gyroBase.g) * k, -lim, lim), THREE.MathUtils.clamp((cur.b - gyroBase.b) * k, -lim, lim));
+  if (now - gyroShown > 250) { gyroShown = now; gyroCtl.setValue(`運作中 β${cur.b.toFixed(0)}° γ${cur.g.toFixed(0)}°`); }
 });
-// iOS：第一次觸碰時請求動作感測權限（也順便讓被省電模式擋下的影片開始播）
+// iOS：要在觸碰事件裡請求「動作與方向」權限（第一次觸碰自動問；面板也有按鈕）
+function askGyro() {
+  if (typeof DeviceOrientationEvent === 'undefined' || !DeviceOrientationEvent.requestPermission) return;
+  gyroCtl.setValue('等待授權…');
+  DeviceOrientationEvent.requestPermission()
+    .then((r) => gyroCtl.setValue(r === 'granted' ? '已授權，傾斜手機看看' : '被拒絕：到 Safari 設定 → 動作與方向存取'))
+    .catch(() => gyroCtl.setValue('請點一下畫面再按'));
+}
 addEventListener('touchend', function ask() {
   removeEventListener('touchend', ask);
-  if (typeof DeviceOrientationEvent !== 'undefined' && DeviceOrientationEvent.requestPermission) DeviceOrientationEvent.requestPermission().catch(() => {});
-  playWall();
+  askGyro();
+  playWall();                                      // 也順便讓被省電模式擋下的影片開始播
 });
+setTimeout(() => { if (MOBILE && !gyroOn) gyroCtl.setValue(isSecureContext ? '還沒收到感測資料' : '需要 HTTPS 才能用'); }, 2500);
 
 // 指標：桌機滑過 = 視差；按住圖示 = 下沉，長按 = 編輯模式；手機在空白處拖曳 = 視差（沒有陀螺儀時）
 const ray = new THREE.Raycaster(), ndc = new THREE.Vector2(), hitP = new THREE.Vector3();
@@ -514,9 +534,13 @@ function updateCamera() {
   camera.projectionMatrix.makePerspective((-W / 2 - ex) * k, (W / 2 - ex) * k, (H / 2 - ey) * k, (-H / 2 - ey) * k, near, D * 4);
   camera.projectionMatrixInverse.copy(camera.projectionMatrix).invert();
   shared.uPixAngle.value = H / (D * renderer.domElement.height);
-  // 手機在世界中的轉向：把「眼睛方向」轉回正前方
-  qPhone.setFromUnitVectors(eyeDir.set(ex, ey, D).normalize(), Z);
-  shared.uEnvRot.value.setFromMatrix4(m4.makeRotationFromQuaternion(qPhone));
+  // 手機在世界中的轉向（傾斜角乘上倍率）：反光看 glintGain，陰影／焦散看 lightGain
+  const turn = (gain, q) => {
+    const ax = THREE.MathUtils.clamp(tilt.x * gain, -1.1, 1.1), ay = THREE.MathUtils.clamp(tilt.y * gain, -1.1, 1.1);
+    return q.setFromUnitVectors(eyeDir.set(Math.tan(ax), Math.tan(ay), 1).normalize(), Z);
+  };
+  shared.uEnvRot.value.setFromMatrix4(m4.makeRotationFromQuaternion(turn(P.glintGain, qPhone)));
+  turn(P.lightGain, qPhone);
   const az = THREE.MathUtils.degToRad(P.lightAz), el = THREE.MathUtils.degToRad(P.lightEl);
   lightBase.set(Math.cos(el) * Math.cos(az), Math.cos(el) * Math.sin(az), Math.sin(el));
   if (P.lightWorld) {
@@ -525,6 +549,15 @@ function updateCamera() {
   } else {
     lightLocal.copy(lightBase);
     shared.uLightW.value.copy(lightBase).applyQuaternion(qPhone);
+  }
+  // 桌布景深視差：桌布在螢幕後 Dw 的地方，投影到螢幕上往眼睛那側偏；放大量依最大傾斜固定（不會呼吸）
+  const Dw = P.wallDepth * W, kw = Dw / (D + Dw);
+  const lim = Math.tan(THREE.MathUtils.degToRad(P.tiltAmt)) * D * kw;
+  const su = screen.uniforms;
+  const zoom = 1 + 2.1 * lim / Math.min(W, H);
+  const sx = ex * kw / W / zoom, sy = ey * kw / H / zoom;
+  if (Math.abs(sx - su.uWallShift.value.x) + Math.abs(sy - su.uWallShift.value.y) > 1e-5 || su.uWallZoom.value !== zoom) {
+    su.uWallShift.value.set(sx, sy); su.uWallZoom.value = zoom; screenDirty = true;
   }
   shared.uLightL.value.copy(lightLocal);
   if (lightLocal.distanceToSquared(lastLight) > 1e-7) { screen.uniforms.uLight.value.copy(lightLocal); lastLight.copy(lightLocal); screenDirty = true; }

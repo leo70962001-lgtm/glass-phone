@@ -13,6 +13,7 @@ void main() { vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }
 const frag = /* glsl */`
 #define MAXI ${MAX_OBJ}
 uniform sampler2D uWallTex; uniform float uWallMode; uniform vec4 uWallUV; uniform float uTime;
+uniform vec2 uWallShift; uniform float uWallZoom;
 uniform sampler2D uOverlay; uniform vec2 uScreen;
 uniform vec4 uObjA[MAXI]; uniform vec4 uObjB[MAXI]; uniform vec4 uObjC[MAXI]; uniform int uCount;
 uniform vec3 uLight; uniform float uIor, uBevel;
@@ -59,7 +60,8 @@ vec3 procWall(vec2 uv, float t) {
 
 void main() {
   vec2 p = (vUv - 0.5) * uScreen;
-  vec3 wall = uWallMode > 0.5 ? texture2D(uWallTex, uWallUV.xy + vUv * uWallUV.zw).rgb : procWall(vUv, uTime);
+  vec2 wuv = (vUv - 0.5) / uWallZoom + 0.5 - uWallShift;      // 桌布景深視差
+  vec3 wall = uWallMode > 0.5 ? texture2D(uWallTex, uWallUV.xy + wuv * uWallUV.zw).rgb : procWall(wuv, uTime);
   vec4 ov = texture2D(uOverlay, vUv);
   // 消散中的圖示：名稱跟著同一道掃描擦掉（uObjC.x = 進度，-1 = 沒有）
   for (int i = 0; i < MAXI; i++) {
@@ -136,6 +138,7 @@ export function createScreenLayer(renderer) {
 
   const uniforms = {
     uWallTex: { value: blank }, uWallMode: { value: 0 }, uWallUV: { value: new THREE.Vector4(0, 0, 1, 1) }, uTime: { value: 0 },
+    uWallShift: { value: new THREE.Vector2() }, uWallZoom: { value: 1 },
     uOverlay: { value: overlay }, uScreen: { value: new THREE.Vector2(375, 812) },
     uObjA: { value: Array.from({ length: MAX_OBJ }, () => new THREE.Vector4()) },
     uObjB: { value: Array.from({ length: MAX_OBJ }, () => new THREE.Vector4()) },
