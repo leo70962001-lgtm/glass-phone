@@ -11,19 +11,22 @@
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="apple-touch-icon" href="assets/icon-180.png">
 <title>玻璃主畫面</title>
-<link rel="stylesheet" href="style.css?v=6c073f0097">
+<link rel="stylesheet" href="style.css?v=77a5fa54a8">
 <!-- ?v= 由 tools/publish.js 換成內容雜湊：GitHub Pages 會快取 10 分鐘，版本號讓手機一定拿到同一版的所有模組 -->
 <script type="importmap">
 {
   "imports": {
     "three": "https://cdn.jsdelivr.net/npm/three@0.180.0/build/three.module.js",
     "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/",
-    "./js/dust.js": "./js/dust.js?v=6c073f0097",
-    "./js/glass.js": "./js/glass.js?v=6c073f0097",
-    "./js/glyphs.js": "./js/glyphs.js?v=6c073f0097",
-    "./js/liquid.js": "./js/liquid.js?v=6c073f0097",
-    "./js/layout.js": "./js/layout.js?v=6c073f0097",
-    "./js/screen.js": "./js/screen.js?v=6c073f0097"
+    "./js/dust.js": "./js/dust.js?v=77a5fa54a8",
+    "./js/glass.js": "./js/glass.js?v=77a5fa54a8",
+    "./js/glyphs.js": "./js/glyphs.js?v=77a5fa54a8",
+    "./js/lens.js": "./js/lens.js?v=77a5fa54a8",
+    "./js/pyramid.js": "./js/pyramid.js?v=77a5fa54a8",
+    "./js/tone.js": "./js/tone.js?v=77a5fa54a8",
+    "./js/liquid.js": "./js/liquid.js?v=77a5fa54a8",
+    "./js/layout.js": "./js/layout.js?v=77a5fa54a8",
+    "./js/screen.js": "./js/screen.js?v=77a5fa54a8"
   }
 }
 </script>
@@ -35,8 +38,9 @@
 <button id="done" class="pill">完成</button>
 <button id="restore" class="pill" hidden>還原</button>
 <button id="reset" hidden>重設主畫面</button>
-<div id="hint">滑鼠移動 = 視差傾斜　長按圖示再拖曳 = 融合、換位　拖曳右下泡泡 = 融合</div>
+<button id="recbar" hidden></button>
+<div id="hint">滑鼠移動 = 視差傾斜　左右拖曳 = 換頁　長按圖示再拖曳 = 融合、換位　拖曳 ⋯ 或＋新增 = 融合　可直接拖放或貼上桌布</div>
 <input id="file" type="file" accept="image/*,video/*" hidden>
-<script type="module" src="js/main.js?v=6c073f0097"></script>
+<script type="module" src="js/main.js?v=77a5fa54a8"></script>
 </body>
 </html>

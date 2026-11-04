@@ -3,7 +3,8 @@
 import * as THREE from 'three';
 import { DISSOLVE_GLSL } from './dust.js';
 
-export const MAX_OBJ = 32;
+export const MAX_OBJ = 40;
+export const MAX_UNDER = 6;
 
 const vert = /* glsl */`
 varying vec2 vUv;
@@ -12,12 +13,15 @@ void main() { vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }
 
 const frag = /* glsl */`
 #define MAXI ${MAX_OBJ}
+#define MAXU ${MAX_UNDER}
 uniform sampler2D uWallTex; uniform float uWallMode; uniform vec4 uWallUV; uniform float uTime;
 uniform vec2 uWallShift; uniform float uWallZoom;
 uniform sampler2D uOverlay; uniform vec2 uScreen;
 uniform vec4 uObjA[MAXI]; uniform vec4 uObjB[MAXI]; uniform vec4 uObjC[MAXI]; uniform int uCount;
 uniform vec3 uLight; uniform float uIor, uBevel;
 uniform float uShadow, uShadowLen, uShadowSoft, uContact, uCaustic, uCausticW, uRainbow, uStar;
+uniform float uLens, uDim, uS;                     // 透鏡模式：柔和陰影、壓暗亮圖
+uniform int uUn; uniform vec4 uUnA[MAXU]; uniform vec4 uUnC[MAXU];   // 控制元件的軌道：中心、半寬高；顏色（線性）＋不透明度
 varying vec2 vUv;
 
 float sdRR(vec2 p, vec2 b, float r) { vec2 q = abs(p) - b + r; return min(max(q.x, q.y), 0.0) + length(max(q, 0.0)) - r; }
@@ -62,16 +66,44 @@ void main() {
   vec2 p = (vUv - 0.5) * uScreen;
   vec2 wuv = (vUv - 0.5) / uWallZoom + 0.5 - uWallShift;      // 桌布景深視差
   vec3 wall = uWallMode > 0.5 ? texture2D(uWallTex, uWallUV.xy + wuv * uWallUV.zw).rgb : procWall(wuv, uTime);
+  // 軌道畫在螢幕層，上面的滑塊透鏡才折射得到
+  for (int i = 0; i < MAXU; i++) {
+    if (i >= uUn) break;
+    vec4 b = uUnA[i];
+    float du = sdRR(p - b.xy, b.zw, min(b.z, b.w));
+    wall = mix(wall, uUnC[i].rgb, uUnC[i].a * (1.0 - smoothstep(-0.6, 0.6, du)));
+  }
   vec4 ov = texture2D(uOverlay, vUv);
   // 消散中的圖示：名稱跟著同一道掃描擦掉（uObjC.x = 進度，-1 = 沒有）
   for (int i = 0; i < MAXI; i++) {
     if (i >= uCount) break;
     if (uObjC[i].x < -0.5) continue;
     vec2 q = (p - uObjA[i].xy) / uObjC[i].y;
-    if (q.y > -0.45 || q.y < -1.1 || abs(q.x) > 1.2) continue;
+    if (q.y > -0.45 || q.y < -1.1 || abs(q.x) > 0.72) continue;
     ov.a *= smoothstep(uObjC[i].x - 0.02, uObjC[i].x + 0.04, dissolveThr(q));
   }
   vec3 col = mix(wall, ov.rgb, ov.a);
+
+  // 透鏡模式：只有玻璃外面有一圈柔和的陰影（往下偏一點）；明亮的圖片在玻璃周圍壓暗
+  if (uLens > 0.5) {
+    float shadeL = 1.0, dimK = 0.0;
+    for (int i = 0; i < MAXI; i++) {
+      if (i >= uCount) break;
+      float vis = uObjC[i].z;
+      if (vis <= 0.0) continue;
+      vec2 lp = p - uObjA[i].xy; vec2 hs = uObjA[i].zw; float r = uObjB[i].x;
+      if (uDim > 0.0) dimK = max(dimK, vis * (1.0 - smoothstep(0.0, 90.0 * uS, sdRR(lp, hs, r))));
+      vec2 qq = abs(lp) - hs;
+      if (max(qq.x, qq.y) > 34.0 * uS) continue;
+      float d0 = sdRR(lp, hs, r);
+      if (d0 < -1.0) continue;
+      float ds = sdRR(lp + vec2(0.0, 5.0 * uS), hs, r);
+      shadeL *= 1.0 - uShadow * 0.32 * vis * (1.0 - smoothstep(-10.0 * uS, 26.0 * uS, ds)) * smoothstep(-1.0, 1.0, d0);
+    }
+    // 這兩個比例是用眼睛看到的亮度定的，這裡是線性值，所以要換算
+    gl_FragColor = vec4(col * pow(shadeL * (1.0 - uDim * dimK), 2.2), 1.0);
+    return;
+  }
 
   vec2 Ld = uLight.xy / max(uLight.z, 0.2);     // 每 1 pt 高度的水平位移（朝光源）
   vec2 away = -Ld / max(length(Ld), 1e-4);
@@ -148,6 +180,8 @@ export function createScreenLayer(renderer) {
     uLight: { value: new THREE.Vector3(0.5, 0.5, 0.7) }, uIor: { value: 1.5 }, uBevel: { value: 6 },
     uShadow: { value: 0.4 }, uShadowLen: { value: 1 }, uShadowSoft: { value: 1 }, uContact: { value: 0.3 },
     uCaustic: { value: 1 }, uCausticW: { value: 3 }, uRainbow: { value: 0.5 }, uStar: { value: 0.5 },
+    uLens: { value: 0 }, uDim: { value: 0 }, uS: { value: 1 },
+    uUn: { value: 0 }, uUnA: { value: Array.from({ length: MAX_UNDER }, () => new THREE.Vector4()) }, uUnC: { value: Array.from({ length: MAX_UNDER }, () => new THREE.Vector4()) },
   };
   const mat = new THREE.ShaderMaterial({ vertexShader: vert, fragmentShader: frag, uniforms, depthTest: false, depthWrite: false });
   const scene = new THREE.Scene();
@@ -166,6 +200,8 @@ export function createScreenLayer(renderer) {
 
   return {
     texture: rt.texture,
+    get width() { return rt.width; },
+    get height() { return rt.height; },
     uniforms,
     overlay,
     resize(w, h, pixelRatio) {

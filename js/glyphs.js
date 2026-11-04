@@ -208,30 +208,28 @@ const G = {
     c.lineWidth = 12; line(c, [106, 182, 106, 72]); c.stroke(); line(c, [198, 162, 198, 52]); c.stroke();
     line(c, [100, 70, 204, 48, 204, 82, 100, 104]); c.closePath(); c.fill();
   },
-  // 液態選單
+  // 浮動玻璃
   menu(c) {
     c.fillStyle = 'rgba(255,255,255,0.95)';
-    for (const x of [80, 128, 176]) { circle(c, x, 128, 14); c.fill(); }
+    for (const x of [78, 128, 178]) { circle(c, x, 128, 13); c.fill(); }
   },
-  edit(c) {
-    c.save(); c.translate(128, 128); c.rotate(Math.PI / 4);
-    frostStroke(c, 8);
-    rr(c, -20, -84, 40, 124, 6); c.fillStyle = FROST_FILL; c.fill(); c.stroke();
-    line(c, [-20, -56, 20, -56]); c.stroke();
-    line(c, [-20, 40, 0, 84, 20, 40]); c.closePath(); c.fillStyle = FROST; c.fill(); c.stroke();
-    c.restore();
+  shot(c) {                                   // 截圖：取景框
+    frostStroke(c, 14);
+    for (const [x, y, dx, dy] of [[58, 58, 1, 1], [198, 58, -1, 1], [58, 198, 1, -1], [198, 198, -1, -1]]) {
+      line(c, [x, y + dy * 40, x, y, x + dx * 40, y]); c.stroke();
+    }
+    circle(c, 128, 128, 22); c.fillStyle = 'rgba(255,255,255,0.95)'; c.fill();
   },
-  glass(c) {
-    frostStroke(c, 9);
-    [[76, 160], [128, 92], [180, 138]].forEach(([y, x]) => {
-      line(c, [44, y, 212, y]); c.stroke();
-      circle(c, x, y, 20); c.fillStyle = 'rgba(255,255,255,0.95)'; c.fill();
-    });
+  wall(c) {                                   // 桌布：畫框裡的山
+    frostStroke(c, 12);
+    rr(c, 44, 60, 168, 136, 18); c.stroke();
+    circle(c, 92, 104, 15); c.fillStyle = 'rgba(255,255,255,0.95)'; c.fill();
+    line(c, [58, 178, 104, 134, 134, 160, 164, 124, 198, 170]); c.stroke();
   },
-  reset(c) {
-    frostStroke(c, 15);
-    c.beginPath(); c.arc(128, 132, 70, -Math.PI * 0.32, Math.PI * 1.32); c.stroke();
-    line(c, [156, 28, 176, 78, 122, 84]); c.closePath(); c.fillStyle = FROST; c.fill(); c.lineWidth = 6; c.stroke();
+  rec(c) {                                    // 錄影：外圈＋實心點
+    frostStroke(c, 12);
+    circle(c, 128, 128, 74); c.stroke();
+    circle(c, 128, 128, 42); c.fillStyle = 'rgba(255,255,255,0.95)'; c.fill();
   },
 };
 
@@ -240,7 +238,7 @@ export function drawAtlas() {
   cv.width = CELL * ATLAS_COLS; cv.height = CELL * ATLAS_ROWS;
   const c = cv.getContext('2d');
   for (const a of [...APPS, ...BUBBLES]) {
-    const draw = G[a.id];
+    const draw = G[a.draw || a.id];
     if (!draw) continue;
     c.save();
     c.translate((a.cell % ATLAS_COLS) * CELL + 8, Math.floor(a.cell / ATLAS_COLS) * CELL + 8);
@@ -252,9 +250,10 @@ export function drawAtlas() {
 }
 
 // 螢幕 UI 疊層：名稱與頁面點（狀態列、瀏海由手機本身提供），解析度 = 螢幕 × pixelRatio
-// labels = [{ label, x, y, dy? }]（目前顯示中的圖示位置；dy = 名稱在中心下方多遠，預設 LABEL_DY）
+// labels = [{ label, x, y, dy?, left?, size? }]（目前顯示中的圖示位置；dy = 名稱在中心下方多遠，預設 LABEL_DY；left = 靠左對齊）
+// page = 目前在第幾頁（0..1 連續），頁面點跟著滑
 const overlayCv = document.createElement('canvas');           // 同一張畫布重複用：動畫時每幀都可能重畫，不要一直配置新的
-export function drawOverlay(L, labels, pixelRatio) {
+export function drawOverlay(L, labels, pixelRatio, page = 0) {
   const cv = overlayCv;
   cv.width = Math.round(L.W * pixelRatio); cv.height = Math.round(L.H * pixelRatio);   // 設定寬高 = 清空並重設狀態
   const c = cv.getContext('2d');
@@ -263,15 +262,37 @@ export function drawOverlay(L, labels, pixelRatio) {
   c.textAlign = 'center'; c.textBaseline = 'middle';
   c.font = `400 ${12 * L.s}px ${FONT}`;
   c.fillStyle = '#fff';
-  // 淺色桌布上也要看得清楚：先一層寬而淡的暗暈，再一層貼字的陰影
-  for (const [col, blur] of [['rgba(0,0,0,0.35)', 6], ['rgba(0,0,0,0.55)', 2]]) {
-    c.shadowColor = col; c.shadowBlur = blur * L.s; c.shadowOffsetY = 0.5 * L.s;
-    for (const a of labels) if (a.label) c.fillText(a.label, X(a.x), Y(a.y - (a.dy ?? LABEL_DY) * L.s));
+  // 白字疊兩層暗暈，亮的桌布上也看得清楚；底下真的很亮的（a.dark）改用深色字配淺色光暈
+  for (const [dark, fill, layers] of [[false, '#fff', [['rgba(0,0,0,0.35)', 6], ['rgba(0,0,0,0.55)', 2]]], [true, '#14141a', [['rgba(255,255,255,0.45)', 5], ['rgba(255,255,255,0.35)', 1.5]]]]) {
+    c.fillStyle = fill;
+    for (const [col, blur] of layers) {
+      c.shadowColor = col; c.shadowBlur = blur * L.s; c.shadowOffsetY = dark ? 0 : 0.5 * L.s;
+      for (const a of labels) {
+        if (!a.label || !!a.dark !== dark) continue;
+        c.textAlign = a.left ? 'left' : 'center';
+        c.font = `${a.size ? 500 : 400} ${(a.size ?? 12) * L.s}px ${FONT}`;
+        c.fillText(a.label, X(a.x), Y(a.y - (a.dy ?? LABEL_DY) * L.s));
+      }
+    }
   }
+  c.shadowOffsetY = 0.5 * L.s;
+  c.shadowColor = 'rgba(0,0,0,0.55)';
   c.shadowBlur = 2 * L.s;
-  for (let i = 0; i < 5; i++) {
-    circle(c, X((-32 + i * 16) * L.s), Y(L.dotsY), 3.4 * L.s);
-    c.fillStyle = i === 0 ? 'rgba(255,255,255,0.95)' : 'rgba(255,255,255,0.5)'; c.fill();
+  for (let i = 0; i < 2; i++) {
+    circle(c, X((-8 + i * 16) * L.s), Y(L.dotsY), 3.4 * L.s);
+    const on = 1 - Math.min(1, Math.abs(page - i));
+    c.fillStyle = `rgba(255,255,255,${0.5 + 0.45 * on})`; c.fill();
   }
+  return cv;
+}
+
+// 玻璃上的文字：畫成白字，著色器只用 alpha（深淺由明暗決定）。w×h 是邏輯尺寸（pt）
+export function paintInk(w, h, pixelRatio, draw) {
+  const cv = document.createElement('canvas');
+  cv.width = Math.max(1, Math.ceil(w * pixelRatio)); cv.height = Math.max(1, Math.ceil(h * pixelRatio));
+  const c = cv.getContext('2d');
+  c.scale(pixelRatio, pixelRatio);
+  c.fillStyle = '#fff'; c.strokeStyle = '#fff'; c.textBaseline = 'middle';
+  draw(c);
   return cv;
 }
