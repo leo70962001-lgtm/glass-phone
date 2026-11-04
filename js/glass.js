@@ -1,14 +1,16 @@
-// 厚玻璃圖示：每個圖示是一個包圍盒，片段著色器在盒內對圓角方塊 SDF 做光線追蹤。
-// 入射面折射 → 玻璃內前進（側壁全反射最多 3 次）→ 從底面碰到螢幕，或從側壁/頂面射出再落到螢幕。
-// 途中穿過 glyph 平面就疊上圖示圖案；R/G/B 用不同折射率 = 色散。
+// 厚玻璃：每塊玻璃一個包圍盒，片段著色器在盒內對 SDF 做光線追蹤（z = 0 是螢幕）。
+// 形狀 = 圓角方塊＋倒角＋頂面弧度；靠近的玻璃用平滑聯集融成一塊（液態融合），每塊只畫離自己近的那一半。
+// 入射面折射 → 玻璃內前進（側壁全反射最多 3 次）→ 貼著螢幕就取樣，或從側壁/底面射出再落到螢幕。
+// 途中穿過 glyph 平面就疊上圖案；R/G/B 用不同折射率 = 色散（低畫質只追一次，再把取樣點沿折射方向錯開）。
 import * as THREE from 'three';
 import { DISSOLVE_GLSL } from './dust.js';
+import { MAXN } from './liquid.js';
 
 const vert = /* glsl */`
-uniform vec2 uHalf; uniform float uHeight, uDome, uMargin;
+uniform vec3 uBox;
 varying vec3 vLocal; varying vec3 vCamLocal;
 void main() {
-  vec3 p = vec3(position.xy * 2.0 * (uHalf + uMargin), position.z * (uHeight + uDome + uMargin));
+  vec3 p = vec3(position.xy * 2.0 * uBox.xy, position.z * uBox.z);
   vLocal = p;
   vCamLocal = (inverse(modelMatrix) * vec4(cameraPosition, 1.0)).xyz;
   gl_Position = projectionMatrix * viewMatrix * modelMatrix * vec4(p, 1.0);
@@ -23,26 +25,41 @@ const frag = /* glsl */`
 #define BOUNCES 4
 #define DISPERSION 1
 #endif
+#define MAXN ${MAXN}
 uniform mat4 modelMatrix; uniform mat4 projectionMatrix;
-uniform mat3 uEnvRot; uniform float uGlow, uRot, uDsProg; uniform vec3 uDsTint;
-uniform vec2 uHalf; uniform float uRadius, uHeight, uBevel, uDome, uMargin;
-uniform float uIor, uDisp, uFrost, uAbsorb, uRefl, uRim, uSpec, uEnvI, uInner;
+uniform mat3 uEnvRot; uniform float uGlow, uRot, uDsProg; uniform vec3 uDsTint, uTouch;
+uniform vec2 uHalf; uniform vec3 uBox; uniform float uRadius, uHeight, uBevel, uDome, uZb;
+uniform int uNn; uniform float uK;
+uniform vec4 uNa[MAXN]; uniform vec4 uNb[MAXN]; uniform vec4 uNc[MAXN]; uniform vec4 uNg[MAXN];   // 鄰居：相對位置＋半寬／圓角、高、底、倒角／弧度、圖案半寬、圖案 z／圖集格
+uniform float uIor, uDisp, uFrost, uAbsorb, uRefl, uRim, uSpec, uEnvI, uInner, uVib;
 uniform vec3 uTint, uLightW, uLightL;
-uniform sampler2D uScreenTex; uniform vec2 uScreenSize, uCenter; uniform float uBaseZ;
-uniform sampler2D uGlyphTex; uniform vec4 uGlyphCell; uniform float uGlyphZ, uGlyphOpacity, uHasGlyph, uGlyphScale, uGlyphFrost, uHaze;
+uniform sampler2D uScreenTex; uniform vec2 uScreenSize, uCenter;
+uniform sampler2D uGlyphTex; uniform vec4 uGlyphCell; uniform float uGlyphZ, uGlyphHalf, uGlyphOpacity, uHasGlyph, uGlyphScale, uGlyphFrost, uHaze;
 uniform float uLodScreen, uLodGlyph, uPixAngle;
 varying vec3 vLocal; varying vec3 vCamLocal;
 
 float sdRR(vec2 p, vec2 b, float r) { vec2 q = abs(p) - b + r; return min(max(q.x, q.y), 0.0) + length(max(q, 0.0)) - r; }
 ${DISSOLVE_GLSL}
-float sdGlass(vec3 p) {
-  float d2 = sdRR(p.xy, uHalf, uRadius);
-  float inner = clamp(-d2 / min(uHalf.x, uHalf.y), 0.0, 1.0);
-  float zt = uHeight + uDome * inner * (2.0 - inner);           // 頂面微凸
-  float b = min(uBevel, min(uHeight, min(uHalf.x, uHalf.y)) - 0.01);
+float shape(vec3 p, vec2 hs, float r, float h, float zb, float bev, float dome) {
+  float d2 = sdRR(p.xy, hs, r);
+  float inner = clamp(-d2 / min(hs.x, hs.y), 0.0, 1.0);
+  float zt = zb + h + dome * inner * (2.0 - inner);             // 頂面微凸（負值 = 中間凹、邊緣隆起）
+  float b = min(bev, min(h, min(hs.x, hs.y)) - 0.01);
   vec2 w = vec2(d2 + b, p.z - zt + b);
   float d = min(max(w.x, w.y), 0.0) + length(max(w, 0.0)) - b;
-  return max(d, -p.z);
+  return max(d, zb - p.z);
+}
+float selfD(vec3 p) { return shape(p, uHalf, uRadius, uHeight, uZb, uBevel, uDome); }
+float otherD(vec3 p, int i) { return shape(vec3(p.xy - uNa[i].xy, p.z), uNa[i].zw, uNb[i].x, uNb[i].y, uNb[i].z, uNb[i].w, uNc[i].x); }
+float sminQ(float a, float b, float k) { float h = max(k - abs(a - b), 0.0) / k; return min(a, b) - h * h * k * 0.25; }
+float sdGlass(vec3 p) {
+  float d = selfD(p);
+  for (int i = 0; i < uNn; i++) {
+    // 鄰居的外框已經比目前距離遠超過 k：平滑聯集不會有影響，省下這次計算（托盤這種大面積玻璃差很多）
+    vec2 q = abs(p.xy - uNa[i].xy) - uNa[i].zw;
+    if (max(q.x, q.y) < d + uK) d = sminQ(d, otherD(p, i), uK);
+  }
+  return d;
 }
 
 vec3 nrm(vec3 p) {
@@ -66,51 +83,52 @@ vec3 screenAt(vec2 xy, float lod) {
   float c = cos(uRot), s = sin(uRot);                       // 編輯模式抖動時圖示會轉
   vec2 uv = (vec2(c * xy.x - s * xy.y, s * xy.x + c * xy.y) + uCenter) / uScreenSize + 0.5;
   if (uv.x < 0.0 || uv.y < 0.0 || uv.x > 1.0 || uv.y > 1.0) return vec3(0.0);
-  return textureLod(uScreenTex, uv, lod).rgb;
-}
-
-vec4 glyphAt(vec2 xy, float lod) {
-  vec2 g = xy / (2.0 * uHalf * uGlyphScale) + 0.5;
-  if (g.x < 0.0 || g.y < 0.0 || g.x > 1.0 || g.y > 1.0) return vec4(0.0);
-  vec4 c = textureLod(uGlyphTex, uGlyphCell.xy + (0.03125 + g * 0.9375) * uGlyphCell.zw, lod);
-  return c;
+  vec3 col = textureLod(uScreenTex, uv, lod).rgb;
+  return max(mix(vec3(dot(col, vec3(0.2126, 0.7152, 0.0722))), col, uVib), vec3(0.0));     // 鮮豔度
 }
 
 // 乳白霧感：路徑越長越偏白（壓克力的散射）
 vec3 haze(vec3 c, float dist) { return mix(c, vec3(0.86, 0.88, 0.92) * uEnvI, 1.0 - exp(-(uHaze + uFrost * 1.5) * dist * 0.02)); }
 
+// 光線這一段穿過某塊玻璃的圖案平面時疊上圖案
+void addGlyph(vec3 p, vec3 q, vec3 d, float gz, float gh, vec4 cell, vec2 off, float dist, vec3 kA, inout vec3 acc, inout float trans) {
+  if ((p.z - gz) * (q.z - gz) >= 0.0) return;
+  float tg = (gz - p.z) / d.z;
+  vec2 g = ((p + d * tg).xy - off) / (2.0 * gh * uGlyphScale) + 0.5;
+  if (g.x < 0.0 || g.y < 0.0 || g.x > 1.0 || g.y > 1.0) return;
+  float lod = uLodGlyph + uFrost * 4.0 * (1.0 - gz / max(uBox.z, 1.0)) + uGlyphFrost * 3.0;
+  vec4 c = textureLod(uGlyphTex, cell.xy + (0.03125 + g * 0.9375) * cell.zw, lod);
+  float a = c.a * uGlyphOpacity;
+  acc += trans * exp(-kA * (dist + tg)) * c.rgb * a * 1.08;
+  trans *= 1.0 - a;
+}
+
+// 記下最後落到螢幕的位置，低畫質色散用
+vec2 gExit; float gLod, gWeight;
+
 vec3 traceRay(vec3 p, vec3 d, float ior) {
   vec3 acc = vec3(0.0); float trans = 1.0; float dist = 0.0;
   vec3 kA = ((vec3(1.0) - uTint) * 0.12 + 0.002) * uAbsorb;   // 每 pt 吸收
+  gWeight = 0.0;
   for (int b = 0; b < BOUNCES; b++) {
-    float t = 0.0; bool base = false;
+    float t = 0.0; bool contact = false, atWall = false;
     for (int j = 0; j < STEPS_IN; j++) {
       vec3 q = p + d * t;
-      if (q.z <= 0.02) { base = true; break; }
+      if (q.z <= 0.02) { contact = true; break; }
       float s = sdGlass(q);
-      if (s > -0.02) break;
+      if (s > -0.02) { atWall = true; break; }
       t += max(-s * 0.9, 0.04);
     }
-    if (base && d.z < 0.0) t = max(-p.z / d.z, 0.0);
+    if (contact && d.z < 0.0) t = max(-p.z / d.z, 0.0);
     vec3 q = p + d * t;
-    if (uHasGlyph > 0.5 && (p.z - uGlyphZ) * (q.z - uGlyphZ) < 0.0) {
-      float tg = (uGlyphZ - p.z) / d.z;
-      vec4 g = glyphAt((p + d * tg).xy, uLodGlyph + uFrost * 4.0 * (1.0 - uGlyphZ / max(uHeight + uDome, 1.0)) + uGlyphFrost * 3.0);
-      float a = g.a * uGlyphOpacity;
-      acc += trans * exp(-kA * (dist + tg)) * g.rgb * a * 1.08;
-      trans *= 1.0 - a;
-    }
+    if (uHasGlyph > 0.5) addGlyph(p, q, d, uGlyphZ, uGlyphHalf, uGlyphCell, vec2(0.0), dist, kA, acc, trans);
+    for (int i = 0; i < uNn; i++) if (uNc[i].y > 0.0) addGlyph(p, q, d, uNc[i].z, uNc[i].y, uNg[i], uNa[i].xy, dist, kA, acc, trans);
     dist += t;
     vec3 att = exp(-kA * dist);
     float lod = uLodScreen + uFrost * (4.0 + log2(1.0 + dist));
-    if (base) {
-      vec2 xy = q.xy;
-      if (uBaseZ > 0.01) {
-        vec3 o = refract(d, vec3(0.0, 0.0, 1.0), ior);
-        if (dot(o, o) < 1e-6) { d = reflect(d, vec3(0.0, 0.0, 1.0)); p = q + vec3(0.0, 0.0, 0.04); continue; }
-        xy += o.xy / max(-o.z, 0.05) * uBaseZ;
-      }
-      return haze(acc + trans * att * screenAt(xy, lod), dist);
+    if (contact || !atWall) {                    // 步數用完還在玻璃裡：別用亂掉的法線，直接看正下方的螢幕
+      gExit = q.xy; gLod = lod; gWeight = trans * att.g;
+      return haze(acc + trans * att * screenAt(q.xy, lod), dist);
     }
     vec3 n = nrm(q);
     vec3 o = refract(d, -n, ior);
@@ -119,16 +137,26 @@ vec3 traceRay(vec3 p, vec3 d, float ior) {
       trans *= uInner;
       continue;
     }
-    vec3 bg = o.z < -0.02 ? screenAt(q.xy + o.xy * ((q.z + uBaseZ) / -o.z), lod) : env(o);
+    vec3 bg;
+    if (o.z < -0.02) {
+      gExit = q.xy + o.xy * (q.z / -o.z); gLod = lod; gWeight = trans * att.g;
+      bg = screenAt(gExit, lod);
+    } else {
+      // 往上／水平射出：只取環境色會在頸部變成一塊白灰。主要折射旁邊的桌布，環境光當高光疊上去
+      vec2 far = q.xy + normalize(o.xy + 1e-4) * (q.z + 10.0);
+      gExit = far; gLod = lod; gWeight = trans * att.g * 0.55;
+      bg = mix(screenAt(far, lod), env(o), 0.45);
+    }
     return haze(acc + trans * att * bg, dist);
   }
-  return haze(acc + trans * exp(-kA * dist) * env(d) * 0.6, dist);
+  gExit = p.xy; gLod = uLodScreen; gWeight = trans;     // 反彈次數用完：取正下方的螢幕，不會跳出亮點
+  return haze(acc + trans * exp(-kA * dist) * screenAt(p.xy, uLodScreen), dist);
 }
 
 void main() {
   vec3 rd = normalize(vLocal - vCamLocal);
   vec3 p = vLocal;
-  vec3 bmax = vec3(uHalf + uMargin + 0.2, uHeight + uDome + uMargin + 0.2);
+  vec3 bmax = uBox + 0.2;
   bool hit = false;
   float bestS = 1e9; vec3 bestP = p; float alpha = 1.0;
   for (int i = 0; i < STEPS_OUT; i++) {
@@ -145,10 +173,18 @@ void main() {
     if (alpha <= 0.0) discard;
     p = bestP;
   }
+  // 融合時兩塊玻璃算的是同一個表面：只畫離自己近的那一半
+  // （先記旗標、迴圈外才 discard：discard 直接放在動態迴圈裡會被 ANGLE/D3D 編譯錯）
+  if (uNn > 0) {
+    float me = selfD(p);
+    bool mine = true;
+    for (int i = 0; i < uNn; i++) { if (otherD(p, i) < me - 0.15) mine = false; }   // 留一點重疊，交界才不會有針孔
+    if (!mine) discard;
+  }
   // 粉塵消散：被掃過的地方挖掉，邊緣微微發光
   float dsEdge = 0.0;
   if (uDsProg > -0.5) {
-    float th = dissolveThr(p.xy / (2.0 * uHalf.x));
+    float th = dissolveThr(p.xy / (2.0 * uGlyphHalf));
     if (th < uDsProg) discard;
     dsEdge = 1.0 - smoothstep(0.0, 0.08, th - uDsProg);
   }
@@ -169,12 +205,26 @@ void main() {
   } else
 #endif
   col = traceRay(pin, refract(rd, n, 1.0 / uIor), uIor);
+#if !DISPERSION
+  // 手機版色散：光線彎得越多，紅藍取樣點錯開越多，只有邊緣會出現彩虹
+  if (uDisp > 0.001 && gWeight > 0.0) {
+    vec2 off = (gExit - p.xy) * uDisp * 0.4;
+    vec3 c0 = screenAt(gExit, gLod);
+    col.r += gWeight * (screenAt(gExit + off, gLod).r - c0.r);
+    col.b += gWeight * (screenAt(gExit - off, gLod).b - c0.b);
+  }
+#endif
   col = col * (1.0 - F * uRefl) + env(reflect(rd, n)) * F * uRefl;
   float rim = pow(1.0 - cosi, 3.0) * uRim;
   col += rim * (0.25 + 0.75 * max(dot(n, uLightL), 0.0)) * 0.55;
   vec3 hv = normalize(uLightL + v);
   col += pow(max(dot(n, hv), 0.0), 48.0) * uSpec * 0.7;
   col += uGlow * vec3(0.16, 0.17, 0.2);                 // 按下時微亮
+  // 觸碰反應：手指位置的玻璃亮起來，倒角更明顯
+  if (uTouch.z > 0.001) {
+    vec2 tp = p.xy - uTouch.xy;
+    col += uTouch.z * exp(-dot(tp, tp) / (uGlyphHalf * uGlyphHalf * 1.6 + 1.0)) * (0.2 + 0.6 * (1.0 - cosi)) * vec3(1.0, 0.98, 0.95);
+  }
   col += uDsTint * dsEdge * 1.3;
 
   vec4 clip = projectionMatrix * viewMatrix * modelMatrix * vec4(p, 1.0);
@@ -190,14 +240,19 @@ export const QUALITY = {
   low: { STEPS_OUT: 40, STEPS_IN: 24, BOUNCES: 2, DISPERSION: 0 },
 };
 
-// shared：所有圖示共用的 uniform 物件（同一個參考，改一次全部生效）
+const vecs = () => Array.from({ length: MAXN }, () => new THREE.Vector4());
+
+// shared：所有玻璃共用的 uniform 物件（同一個參考，改一次全部生效）
 export function createGlass(shared, own, quality = 'high') {
   const uniforms = {
-    uHalf: { value: new THREE.Vector2(30, 30) }, uRadius: { value: 14 }, uHeight: { value: 12 }, uBevel: { value: 6 },
-    uCenter: { value: new THREE.Vector2() }, uBaseZ: { value: 0 },
+    uHalf: { value: new THREE.Vector2(30, 30) }, uBox: { value: new THREE.Vector3(32, 32, 20) },
+    uRadius: { value: 14 }, uHeight: { value: 12 }, uBevel: { value: 6 }, uDome: { value: 0 }, uZb: { value: 0 },
+    uCenter: { value: new THREE.Vector2() },
     uTint: { value: new THREE.Vector3(1, 1, 1) },
-    uGlyphCell: { value: new THREE.Vector4() }, uHasGlyph: { value: 1 }, uGlyphZ: { value: 1 }, uGlow: { value: 0 },
+    uGlyphCell: { value: new THREE.Vector4() }, uHasGlyph: { value: 1 }, uGlyphZ: { value: 1 }, uGlyphHalf: { value: 30 }, uGlow: { value: 0 },
+    uTouch: { value: new THREE.Vector3() },
     uRot: { value: 0 }, uDsProg: { value: -1 }, uDsTint: { value: new THREE.Color(0xd6b4ff) },
+    uNn: { value: 0 }, uK: { value: 1 }, uNa: { value: vecs() }, uNb: { value: vecs() }, uNc: { value: vecs() }, uNg: { value: vecs() },
     ...shared,
     ...own,
   };

@@ -131,6 +131,7 @@ export function createScreenLayer(renderer) {
     minFilter: THREE.LinearMipmapLinearFilter, magFilter: THREE.LinearFilter,
   });
   const overlay = new THREE.CanvasTexture(document.createElement('canvas'));
+  let overlaySize = 0;
   overlay.colorSpace = THREE.SRGBColorSpace;
   overlay.anisotropy = 4;
   const blank = new THREE.DataTexture(new Uint8Array([255, 255, 255, 255]), 1, 1);
@@ -173,9 +174,8 @@ export function createScreenLayer(renderer) {
       fit();
     },
     setOverlay(canvas) {
-      const resized = !overlay.image || overlay.image.width !== canvas.width || overlay.image.height !== canvas.height;
+      if (overlaySize !== canvas.width * 65536 + canvas.height) { overlaySize = canvas.width * 65536 + canvas.height; overlay.dispose(); }   // 尺寸變了才重配貼圖
       overlay.image = canvas;
-      if (resized) overlay.dispose();
       overlay.needsUpdate = true;
     },
     setWallpaper(tex) {

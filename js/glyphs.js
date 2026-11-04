@@ -1,11 +1,11 @@
 // 圖示 glyph 圖集（印在玻璃內部的那一層）與螢幕 UI 疊層（狀態列、名稱、瀏海）。
 // glyph 格：256 px = 60 pt 的方塊；內容畫在中間 240 px（四周留 8 px 防 mipmap 滲色）。
-import { APPS, LABEL_DY } from './layout.js';
+import { APPS, BUBBLES, LABEL_DY } from './layout.js';
 export { FONT };
 
 export const CELL = 256;
 export const ATLAS_COLS = 6;
-export const ATLAS_ROWS = 4;
+export const ATLAS_ROWS = 5;
 const FROST = 'rgba(255,255,255,0.86)';
 const FROST_FILL = 'rgba(255,255,255,0.26)';
 const FONT = '"SF Pro Text", "-apple-system", "Segoe UI", "Helvetica Neue", Arial, sans-serif';
@@ -208,13 +208,38 @@ const G = {
     c.lineWidth = 12; line(c, [106, 182, 106, 72]); c.stroke(); line(c, [198, 162, 198, 52]); c.stroke();
     line(c, [100, 70, 204, 48, 204, 82, 100, 104]); c.closePath(); c.fill();
   },
+  // 液態選單
+  menu(c) {
+    c.fillStyle = 'rgba(255,255,255,0.95)';
+    for (const x of [80, 128, 176]) { circle(c, x, 128, 14); c.fill(); }
+  },
+  edit(c) {
+    c.save(); c.translate(128, 128); c.rotate(Math.PI / 4);
+    frostStroke(c, 8);
+    rr(c, -20, -84, 40, 124, 6); c.fillStyle = FROST_FILL; c.fill(); c.stroke();
+    line(c, [-20, -56, 20, -56]); c.stroke();
+    line(c, [-20, 40, 0, 84, 20, 40]); c.closePath(); c.fillStyle = FROST; c.fill(); c.stroke();
+    c.restore();
+  },
+  glass(c) {
+    frostStroke(c, 9);
+    [[76, 160], [128, 92], [180, 138]].forEach(([y, x]) => {
+      line(c, [44, y, 212, y]); c.stroke();
+      circle(c, x, y, 20); c.fillStyle = 'rgba(255,255,255,0.95)'; c.fill();
+    });
+  },
+  reset(c) {
+    frostStroke(c, 15);
+    c.beginPath(); c.arc(128, 132, 70, -Math.PI * 0.32, Math.PI * 1.32); c.stroke();
+    line(c, [156, 28, 176, 78, 122, 84]); c.closePath(); c.fillStyle = FROST; c.fill(); c.lineWidth = 6; c.stroke();
+  },
 };
 
 export function drawAtlas() {
   const cv = document.createElement('canvas');
   cv.width = CELL * ATLAS_COLS; cv.height = CELL * ATLAS_ROWS;
   const c = cv.getContext('2d');
-  for (const a of APPS) {
+  for (const a of [...APPS, ...BUBBLES]) {
     const draw = G[a.id];
     if (!draw) continue;
     c.save();
@@ -227,10 +252,11 @@ export function drawAtlas() {
 }
 
 // 螢幕 UI 疊層：名稱與頁面點（狀態列、瀏海由手機本身提供），解析度 = 螢幕 × pixelRatio
-// labels = [{ label, x, y }]（目前顯示中的圖示位置）
+// labels = [{ label, x, y, dy? }]（目前顯示中的圖示位置；dy = 名稱在中心下方多遠，預設 LABEL_DY）
+const overlayCv = document.createElement('canvas');           // 同一張畫布重複用：動畫時每幀都可能重畫，不要一直配置新的
 export function drawOverlay(L, labels, pixelRatio) {
-  const cv = document.createElement('canvas');
-  cv.width = Math.round(L.W * pixelRatio); cv.height = Math.round(L.H * pixelRatio);
+  const cv = overlayCv;
+  cv.width = Math.round(L.W * pixelRatio); cv.height = Math.round(L.H * pixelRatio);   // 設定寬高 = 清空並重設狀態
   const c = cv.getContext('2d');
   c.scale(pixelRatio, pixelRatio);
   const X = (x) => x + L.W / 2, Y = (y) => L.H / 2 - y;
@@ -240,7 +266,7 @@ export function drawOverlay(L, labels, pixelRatio) {
   // 淺色桌布上也要看得清楚：先一層寬而淡的暗暈，再一層貼字的陰影
   for (const [col, blur] of [['rgba(0,0,0,0.35)', 6], ['rgba(0,0,0,0.55)', 2]]) {
     c.shadowColor = col; c.shadowBlur = blur * L.s; c.shadowOffsetY = 0.5 * L.s;
-    for (const a of labels) if (a.label) c.fillText(a.label, X(a.x), Y(a.y - LABEL_DY * L.s));
+    for (const a of labels) if (a.label) c.fillText(a.label, X(a.x), Y(a.y - (a.dy ?? LABEL_DY) * L.s));
   }
   c.shadowBlur = 2 * L.s;
   for (let i = 0; i < 5; i++) {

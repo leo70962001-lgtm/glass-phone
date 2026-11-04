@@ -10,13 +10,6 @@ body {
   position: fixed; visibility: hidden; pointer-events: none;
   padding-top: env(safe-area-inset-top); padding-bottom: env(safe-area-inset-bottom);
 }
-#gear {
-  position: fixed; top: calc(env(safe-area-inset-top) + 6px); right: 10px; z-index: 10;
-  width: 34px; height: 34px; border-radius: 50%; border: 1px solid rgba(255,255,255,.35);
-  background: rgba(255,255,255,.18); color: #fff; font-size: 18px; line-height: 1;
-  -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px);
-  display: none;
-}
 /* 編輯模式：刪除鈕、完成、還原 */
 #badges { position: fixed; inset: 0; pointer-events: none; z-index: 5; }
 .del {
@@ -34,7 +27,6 @@ body {
 #done { right: 12px; }
 #restore { left: 12px; }
 body.editing #done, body.editing #restore:not([hidden]) { display: block; }
-body.editing #gear { display: none !important; }
 #reset {
   position: fixed; z-index: 10; transform: translate(-50%, -50%);
   padding: 10px 22px; border-radius: 22px; border: 1px solid rgba(255,255,255,.55); color: #fff;
@@ -49,7 +41,6 @@ body.editing #gear { display: none !important; }
 }
 .lil-gui.root { --width: 300px; }
 @media (pointer: coarse) {
-  #gear { display: block; }
   #hint { display: none; }
   /* 手機：面板改成底部抽屜 */
   .lil-gui.root.autoPlace {

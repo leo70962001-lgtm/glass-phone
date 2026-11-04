@@ -10,7 +10,7 @@ const GRID = [
   ['tv', 'TV'], ['appstore', 'App Store'], ['itunes', 'iTunes Store'], ['ibooks', 'iBooks'],
   ['health', 'Health'], ['wallet', 'Wallet'], ['settings', 'Settings'],
 ];
-const DOCK_APPS = ['phone', 'safari', 'messages', 'music'];
+const DOCK_APPS = [['phone', 'Phone'], ['safari', 'Safari'], ['messages', 'Messages'], ['music', 'Music']];
 
 // tint = 玻璃本體的顏色（吸收），glyph 在 glyphs.js
 const TINT = {
@@ -23,8 +23,16 @@ const TINT = {
 
 export const APPS = [
   ...GRID.map(([id, label]) => ({ id, label, dock: false })),
-  ...DOCK_APPS.map((id) => ({ id, label: '', dock: true })),
+  ...DOCK_APPS.map(([id, label]) => ({ id, label, dock: true })),
 ].map((a, i) => ({ ...a, cell: i, tint: TINT[a.id] || [1, 1, 1] }));
+
+// 液態選單：主泡泡點一下分裂成三顆（size = 直徑 pt，tint 清玻璃）
+export const BUBBLES = [
+  { id: 'menu', label: '', size: 52, child: false },
+  { id: 'edit', label: '編輯', size: 46, child: true },
+  { id: 'glass', label: '玻璃', size: 46, child: true },
+  { id: 'reset', label: '重設', size: 46, child: true },
+].map((b, i) => ({ ...b, cell: APPS.length + i, tint: [1, 1, 1] }));
 
 // W×H 螢幕、上下安全區 → 格位。grid(i) = 第 i 個主畫面格位；dockSlot(i, n) = Dock 裡 n 顆時第 i 顆（置中排）
 export function computeLayout(W, H, safeTop, safeBottom) {
@@ -43,7 +51,8 @@ export function computeLayout(W, H, safeTop, safeBottom) {
     W, H, s, icon,
     grid: (i) => ({ x: colX[i % 4], y: Y(row1 + pitch * Math.floor(i / 4)) }),
     dockSlot: (i, n) => ({ x: (i - (n - 1) / 2) * (icon + gap), y: Y(dockC) }),
-    dock: { x: 0, y: Y(dockC), hx: (W - 21 * s) / 2, hy: 49 * s, r: 28 * s },
+    dock: { x: 0, y: Y(dockC), hx: (W - 21 * s) / 2, hy: 49 * s, r: 38 * s },
+    menu: { x: colX[3], y: Y(dockTop - 50 * s) },          // 離托盤 24 pt：預設融合距離下不相連，拖近一點就融合
     dotsY: Y(dots),
   };
 }
