@@ -578,7 +578,9 @@ function loadVideo(url) {
   return v;
 }
 function stopVideo() { if (wallVideo) { wallVideo.pause(); wallVideo.removeAttribute('src'); wallVideo.load(); wallVideo = null; } }
+const wallFlow = new Set();             // wallpapers.json 裡標 flow 的桌布：水面加一層緩慢的流動
 function setWallpaper(key) {
+  screen.uniforms.uFlow.value = wallFlow.has(key) ? 1 : 0;
   if (key === 'upload') { document.getElementById('file').click(); return; }
   stopVideo();
   if (key === 'flow') { screen.setWallpaper(null); screenDirty = true; toneDirty = true; return; }
@@ -766,7 +768,7 @@ function applyPreset(name) {
 fetch('assets/wallpapers.json').then((r) => (r.ok ? r.json() : [])).then((list) => {
   if (!list.length) return;
   const opts = {};
-  for (const w of list) opts[w.name] = w.file;
+  for (const w of list) { opts[w.name] = w.file; if (w.flow) wallFlow.add(w.file); }
   wallCtl.options({ ...opts, ...wallOptions, '上傳圖片／影片…': 'upload' }).name('桌布').onChange(setWallpaper);
   P.wallpaper = list[0].file; wallCtl.updateDisplay();
   setWallpaper(P.wallpaper);
@@ -1562,6 +1564,7 @@ function step(now) {
   if (FX.page.x > 0.005 && now - clockAt > 1000) { clockAt = now; paintClock(); }
 
   if (P.animateWall && screen.uniforms.uWallMode.value < 0.5) { screen.uniforms.uTime.value = t; screenDirty = true; }
+  else if (P.animateWall && screen.uniforms.uFlow.value > 0) screen.uniforms.uTime.value = t;   // 水流跟著影片的影格更新，不多重畫
   if (screenDirty) needsRender = true;
   if (rec) needsRender = true;                                  // 錄影時每一幀都畫，影片才是均勻的
   if (!needsRender) {
