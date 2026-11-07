@@ -1,4 +1,6 @@
 [
+  { "name": "池塘動畫（ComfyUI）", "file": "assets/pond1-loop.mp4" },
+  { "name": "池塘靜態（Gemini）", "file": "assets/pond1.jpg" },
   { "name": "絲帶動畫（ComfyUI）", "file": "assets/silk1-loop.mp4" },
   { "name": "絲帶靜態（Gemini）", "file": "assets/silk1.jpg" }
 ]

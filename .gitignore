@@ -5,3 +5,4 @@ tools/comfy/*.png
 refs/
 .claude/
 node_modules/
+tools/comfy/*.webm

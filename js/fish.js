@@ -1,10 +1,12 @@
-// 鯉魚：主畫面底下是一池水，只有透過玻璃看得到。魚從 Dock 的圖示裡出現、先繞一小圈，
-// 再一排一排往上：每次挑上一排、左右不遠的一個圖示游過去（路線是彎的），在玻璃裡游得慢、穿過縫隙時加快，
-// 所以大部分時間都在玻璃圖示裡。游出上緣後再從 Dock 出現。手指按住，附近的魚會急轉逃開。
-// 游法照鯉魚（鯵型游法）：身體的波從頭傳到尾、越往尾巴擺越大；要快就加快擺尾頻率而不是加大擺幅；
-// 擺一陣就滑一陣（擺尾─滑行）；轉彎時整個身體彎成弧形，彎得越多轉得越急。
-// 畫法：每隻魚是一片會擺尾的四邊形，畫進一張透明的「魚層」（螢幕大小、含 mipmap）。
-// 玻璃著色器折射時一起取樣（邊緣會被透鏡擠壓）；玻璃之間的縫隙另外淡淡地畫一層，像隔著水看到。
+// 鯉魚：主畫面底下是一池水，只有透過玻璃看得到。
+// 群體（文獻＋鯉魚池影片分析，見 docs/koi-behavior.md）：2–4 隻的小群居多，最大的帶頭，其他的排在後面約一個身長、
+// 方向和速度跟牠一致；每到一個圖示就聚在裡面慢慢打轉幾秒（方向亂、間距約一個身長），再一起移到上一排；
+// 偶爾有一隻脫隊。整群從螢幕下緣外面游上來、先在 Dock 的圖示打轉；游出上緣後再從下面游上來。
+// 動作一律連續：不會憑空出現、不會瞬間移動，穿過玻璃之間的縫隙也不加速（只是在玻璃外面看不到）。
+// 手指剛碰到玻璃：底下的魚嚇一跳急轉；點一下圖示：附近的小群游進那個圖示打轉一陣（觀賞鯉以為要餵食）。
+// 游法照鯉魚（鯵型游法）：身體的波從頭傳到尾、越往尾巴擺越大；要快就加快擺尾頻率；擺一陣就滑一陣；
+// 轉彎時整個身體彎成弧形。魚可以比圖示大：就像大鯉魚從一扇扇玻璃窗底下游過。
+// 畫法：每隻魚是一片會擺尾的四邊形，畫進一張透明的「魚層」（螢幕大小、含 mipmap），玻璃著色器折射時一起取樣。
 import * as THREE from 'three';
 
 const vert = /* glsl */`
@@ -130,37 +132,59 @@ export function createFish(renderer) {
   }).catch(() => {});
 
   const wrap = (a) => Math.atan2(Math.sin(a), Math.cos(a));
+  const rnd = (a, b) => a + Math.random() * (b - a);
   const rbox = (a, x, y) => {
     const qx = Math.abs(x - a.x) - a.hx + a.r, qy = Math.abs(y - a.y) - a.hy + a.r;
     return Math.min(Math.max(qx, qy), 0) + Math.hypot(Math.max(qx, 0), Math.max(qy, 0)) - a.r;
   };
   const showing = (st) => !!(st && st.live && (!st.mesh || st.mesh.visible) && !st.removed && !st.ds && !st.hidden);
   // 下一個要游去的圖示：上一排（最低的那一排）裡，左右離得近的比較會被選到
-  function nextTarget(f, env) {
-    const s = env.s, up = env.targets.filter((st) => showing(st) && st.live.y > f.y + 25 * s);
+  // (x, y) = 帶頭那隻的位置；out 會記下要游向圖示裡的哪一點（ox, oy）
+  function nextTarget(x, y, env, out) {
+    const s = env.s, up = env.targets.filter((st) => showing(st) && st.live.y > y + 25 * s);
     if (!up.length) return null;
     const low = Math.min(...up.map((st) => st.live.y)), row = up.filter((st) => st.live.y < low + 45 * s);
-    const w = row.map((st) => Math.exp(-Math.abs(st.live.x - f.x) / (85 * s)) * (0.4 + Math.random()));
+    const w = row.map((st) => Math.exp(-Math.abs(st.live.x - x) / (85 * s)) * (0.4 + Math.random()));
     let r = Math.random() * w.reduce((a, b) => a + b, 0), pick = row[0];
     for (let i = 0; i < row.length; i++) { r -= w[i]; if (r <= 0) { pick = row[i]; break; } }
-    f.ox = rnd(-0.25, 0.25) * pick.live.hx; f.oy = rnd(-0.25, 0.25) * pick.live.hy;
+    out.ox = rnd(-0.2, 0.2) * pick.live.hx; out.oy = rnd(-0.2, 0.2) * pick.live.hy;
     return pick;
   }
-  const rnd = (a, b) => a + Math.random() * (b - a);
-  // 出生：在 Dock 那一帶，朝隨機方向，先繞一小圈（curl）再往上游；first = 一開始就散在整個畫面上
-  function spawn(f, env, first) {
+
+  // 小群：2–4 隻居多，偶爾單獨一隻（野生鯉魚覓食時是頻繁重組的小群）。最大的那隻帶頭
+  const groups = [];
+  let callSt = null, callT = 0;
+  const pickSize = () => { const r = Math.random(); return r < 0.15 ? 1 : r < 0.5 ? 2 : r < 0.85 ? 3 : 4; };
+  function newFish(env) {
+    const k = rnd(0.85, 1.2);
+    return { k, len: env.size * env.s * k, kind: fish.length % rows, phase: rnd(0, 6.28), alpha: 1, side: fish.length % 2 ? 1 : -1, x: 0, y: 0, ang: 0, speed: 0, bend: 0, amp: 0.08, beat: true, beatT: 1, glideT: 0, flee: 0, wob: 0, out: false };
+  }
+  // 出生：整群從螢幕下緣外面游上來，先進 Dock 的某個圖示打轉，再往上（不會憑空出現）。
+  // first = 剛打開時：散在整個畫面上，一開始就在游
+  function spawnGroup(g, env, first) {
     const s = env.s;
-    if (first) { f.x = rnd(-W / 2 + 30 * s, W / 2 - 30 * s); f.y = rnd(-H / 2 + 80 * s, H / 2 - 40 * s); f.ang = Math.PI / 2 + rnd(-0.6, 0.6); f.mode = 'swim'; }
-    else {
-      const homes = env.docks.filter(showing);
-      if (homes.length) { const a = homes[Math.floor(Math.random() * homes.length)].live; f.x = a.x + rnd(-0.2, 0.2) * a.hx; f.y = a.y + rnd(-0.2, 0.2) * a.hy; }
-      else { f.x = rnd(-env.dockHalfW * 0.85, env.dockHalfW * 0.85); f.y = env.dockY + rnd(-20, 20) * s; }
-      f.ang = rnd(0, Math.PI * 2); f.mode = 'curl'; f.curlDir = Math.random() < 0.5 ? -1 : 1; f.curlLeft = rnd(1.4, 3.2);
-    }
-    f.speed = 0.3 * f.len; f.alpha = 0; f.bend = 0; f.tgt = null;
-    f.beat = true; f.beatT = rnd(0.8, 2); f.amp = 0.08;
-    f.y0 = f.y; f.lambda = rnd(260, 420) * s; f.mAmp = rnd(0.35, 0.7); f.mPh = rnd(0, Math.PI * 2);
-    f.wob = 0; f.flee = 0;
+    g.members.sort((a, b) => b.len - a.len);
+    const L = g.members[0];
+    const homes = env.docks.filter(showing);
+    const home = homes.length ? homes[Math.floor(Math.random() * homes.length)] : null;
+    let cx, cy;
+    if (first) { cx = rnd(-W / 2 + 40 * s, W / 2 - 40 * s); cy = rnd(-H / 2 + 120 * s, H / 2 - 60 * s); }
+    else { cx = home ? home.live.x + rnd(-20, 20) * s : rnd(-W / 3, W / 3); cy = -H / 2 - L.len * 0.9; }
+    const a0 = Math.PI / 2 + rnd(-0.4, 0.4);
+    g.members.forEach((f, i) => {
+      // 跟隨的排在帶頭那隻後面（下面），一起游上來
+      f.x = cx + (i ? f.side * 0.45 * L.len : 0) + rnd(-0.1, 0.1) * L.len; f.y = cy - 1.05 * L.len * Math.ceil(i / 2);
+      f.ang = a0 + rnd(-0.3, 0.3); f.speed = 0.4 * f.len; f.alpha = 1; f.out = false; f.flee = 0;
+      f.beat = true; f.beatT = rnd(0.6, 2); f.side = i % 2 ? 1 : -1;
+    });
+    g.mode = 'travel'; g.tgt = first ? null : home; g.ox = 0; g.oy = 0; g.called = null;
+    g.stay = 0; g.y0 = cy; g.lambda = rnd(260, 420) * s; g.mAmp = rnd(0.3, 0.6); g.mPh = rnd(0, 6.28);
+  }
+  function makeGroup(env, size, first) {
+    const g = { members: [] };
+    for (let i = 0; i < size; i++) { const f = newFish(env); f.g = g; fish.push(f); g.members.push(f); }
+    groups.push(g);
+    spawnGroup(g, env, first);
   }
 
   return {
@@ -168,6 +192,9 @@ export function createFish(renderer) {
     get texture() { return rt ? rt.texture : null; },
     get count() { return fish.length; },
     get list() { return fish; },               // 測試用
+    get groups() { return groups; },           // 測試用
+    // 點了一個圖示：附近的小群游過來
+    call(st) { callSt = st; callT = 1.5; for (const g of groups) if (g.called === st) g.called = null; },
     resize(w, h, pr) {
       W = w; H = h;
       const pw = Math.max(1, Math.round(w * pr)), ph = Math.max(1, Math.round(h * pr));
@@ -177,83 +204,176 @@ export function createFish(renderer) {
       gap.scale.set(w, h, 1);
       gapU.uTex.value = rt.texture;
     },
-    // env: { n, size, speed, s, finger, pressing, gapAlpha, dockY, dockHalfW, docks, targets, glass }。回傳是否有魚（要重畫）
+    // env: { n, size, speed, s, finger, pressing, pressMs, gapAlpha, dockY, dockHalfW, docks, targets, glass }。回傳是否有魚（要重畫）
     // docks / targets：玻璃的狀態（.live = 目前形狀）；glass：目前所有玻璃的形狀（判斷魚在不在玻璃裡）
     update(dt, env) {
       const { s } = env;
       gapU.uAlpha.value = env.gapAlpha;
       const first = fish.length === 0;
-      while (fish.length < Math.min(env.n, MAX)) {
-        const f = { len: env.size * s * rnd(0.85, 1.2), kind: fish.length % rows, phase: rnd(0, 6.28) };
-        spawn(f, env, first && fish.length % 3 !== 2);   // 一開始三分之二散在畫面上，其餘從 Dock 出現
-        fish.push(f);
+      while (fish.length < Math.min(env.n, MAX)) makeGroup(env, Math.min(pickSize(), Math.min(env.n, MAX) - fish.length), first);
+      while (fish.length > env.n) {                    // 減少數量：從最後一群拿掉
+        const g = groups[groups.length - 1], f = g.members.pop();
+        fish.splice(fish.indexOf(f), 1);
+        if (!g.members.length) groups.pop();
       }
-      if (fish.length > env.n) fish.length = Math.max(0, env.n);
+      // 手指剛碰到玻璃：底下的魚嚇一跳
+      const startle = env.pressing && env.pressMs < 160;
+      callT = Math.max(0, callT - dt);
       const n = Math.max(1, Math.ceil(dt * 60)), h = dt / n;
-      for (const f of fish) {
+      for (let i = 0; i < groups.length; i++) {
+        for (let j = i + 1; j < groups.length; j++) {
+          const A = groups[i], B = groups[j], a = A.members[0], b = B.members[0];
+          if (!a || !b || A.members.length + B.members.length > 4 || A.mode === 'curl' || B.mode === 'curl') continue;
+          if (Math.hypot(a.x - b.x, a.y - b.y) < 3 * Math.max(a.len, b.len) && Math.abs(a.y) < H / 2 && Math.abs(b.y) < H / 2) {
+            const keep = a.len >= b.len ? A : B, gone = keep === A ? B : A;
+            for (const f of gone.members) { f.g = keep; keep.members.push(f); }
+            keep.members.sort((x, y) => y.len - x.len);       // 最大的帶頭
+            keep.members.forEach((f, k) => { f.side = k % 2 ? 1 : -1; });
+            groups.splice(groups.indexOf(gone), 1);
+            j--;
+          }
+        }
+      }
+      if (callSt && callT > 0) {
+        for (const g of groups) {
+          const lead = g.members[0];
+          if (!lead || g.mode === 'curl' || g.called === callSt || !showing(callSt)) continue;
+          if (Math.hypot(callSt.live.x - lead.x, callSt.live.y - lead.y) < 320 * s) {
+            g.tgt = callSt; g.ox = rnd(-0.15, 0.15) * callSt.live.hx; g.oy = rnd(-0.15, 0.15) * callSt.live.hy;
+            g.mode = 'travel'; g.called = callSt;
+          }
+        }
+      }
+      for (const g of groups) {
+        const lead = g.members[0];
+        // 落單的：附近有空位的群，就往牠們的帶頭那隻游過去（吸引區）
+        if (g.members.length === 1 && g.mode !== 'curl') {
+          let best = null, bd = 160 * s;
+          for (const o of groups) {
+            if (o === g || o.members.length >= 4 || o.mode === 'curl') continue;
+            const d = Math.hypot(o.members[0].x - lead.x, o.members[0].y - lead.y);
+            if (d < bd) { bd = d; best = o; }
+          }
+          g.join = best;
+        } else g.join = null;
         for (let i = 0; i < n; i++) {
-          const cruise = 0.55 * f.len * env.speed;          // 巡游：每秒約半個身長
-          let steer;
-          if (f.mode === 'curl') {                            // 剛出現：繞一小圈，轉到大致朝上就開始往上游
-            steer = f.curlDir * 0.9;
-            f.curlLeft -= Math.abs(steer) * h;
-            if (f.curlLeft <= 0 && Math.abs(wrap(f.ang - Math.PI / 2)) < 0.6) f.mode = 'swim';
-          } else {
-            // 一排一排往上：朝上一排的某個圖示游；到了就挑再上一排的。路線再加一點蛇行，不會是直線
-            const meander = f.mAmp * Math.sin(((f.y - f.y0) / f.lambda) * Math.PI * 2 + f.mPh);
-            f.wob += (Math.random() - 0.5) * h * 0.8; f.wob *= 1 - h * 0.4;
-            if (!showing(f.tgt)) f.tgt = nextTarget(f, env);
-            if (f.tgt) {
-              const a = f.tgt.live, tx = a.x + f.ox, ty = a.y + f.oy;
-              if (Math.hypot(tx - f.x, ty - f.y) < Math.min(a.hx, a.hy) * 0.45 || ty < f.y - 10 * s) f.tgt = nextTarget(f, env);
-              steer = wrap(Math.atan2(ty - f.y, tx - f.x) + meander * 0.35 + f.wob - f.ang) * 1.5;
-            } else {
-              // 最上面一排之後：直接往上游出去
-              const edge = W / 2 - 40 * s, side = Math.abs(f.x) > edge ? Math.sign(f.x) * Math.min(1, (Math.abs(f.x) - edge) / (30 * s)) * 0.9 : 0;   // 往上（90°）時角度變小 = 往右：左邊緣要減、右邊緣要加
-              steer = wrap(Math.PI / 2 + meander + side + f.wob - f.ang) * 1.2;
+          const cruise = 0.5 * lead.len * env.speed;
+          // ---- 帶頭的：決定整群要去哪裡 ----
+          if (g.mode === 'curl') {
+            g.curlLeft -= 0.9 * h;
+            if (g.curlLeft <= 0 && Math.abs(wrap(lead.ang - Math.PI / 2)) < 0.6) g.mode = 'travel';
+          } else if (g.mode === 'travel') {
+            if (!showing(g.tgt) || (g.tgt.live.y < lead.y - 10 * s && g.called !== g.tgt && !env.docks.includes(g.tgt))) g.tgt = nextTarget(lead.x, lead.y, env, g);
+            if (g.tgt) {
+              const a = g.tgt.live;
+              if (Math.hypot(a.x + g.ox - lead.x, a.y + g.oy - lead.y) < Math.min(a.hx, a.hy) * 0.5) {
+                g.mode = 'mill'; g.stay = g.called === g.tgt ? rnd(4, 6) : rnd(1.5, 4.5);
+                g.alt = env.targets.filter((st) => st !== g.tgt && showing(st) && Math.hypot(st.live.x - a.x, st.live.y - a.y) < 110 * s)
+                  .sort((p, q) => Math.hypot(p.live.x - a.x, p.live.y - a.y) - Math.hypot(q.live.x - a.x, q.live.y - a.y));
+              }
+            }
+          } else if (g.mode === 'mill') {
+            g.stay -= h;
+            if (!showing(g.tgt)) g.mode = 'travel';
+            else if (g.stay <= 0) {
+              g.mode = 'travel'; g.called = null; g.tgt = nextTarget(lead.x, lead.y, env, g);
+              // 重組：偶爾最後一隻自己走（變成單獨一群）
+              if (g.members.length > 1 && Math.random() < 0.12) {
+                const f = g.members.pop(), ng = { members: [f], mode: 'travel', ox: 0, oy: 0, stay: 0, y0: f.y, lambda: g.lambda, mAmp: g.mAmp, mPh: rnd(0, 6.28) };
+                ng.tgt = nextTarget(f.x, f.y, env, ng);
+                f.g = ng; groups.push(ng);
+              }
             }
           }
-          // 別撞到其他魚：往旁邊讓
-          const dx = Math.cos(f.ang), dy = Math.sin(f.ang);
-          for (const o of fish) {
-            if (o === f) continue;
-            const ox = o.x - f.x, oy = o.y - f.y, dd = Math.hypot(ox, oy);
-            if (dd < f.len * 0.85 && dd > 0.01) steer += (dx * oy - dy * ox > 0 ? -1 : 1) * 1.2 * (1 - dd / (f.len * 0.85));
+          for (let k = 0; k < g.members.length; k++) {
+            const f = g.members[k], isLead = k === 0;
+            const dx = Math.cos(f.ang), dy = Math.sin(f.ang);
+            let steer = 0, pace = 1, want = cruise;
+            f.wob += (Math.random() - 0.5) * h * 0.8; f.wob *= 1 - h * 0.4;
+            const fdx = f.x - env.finger.x, fdy = f.y - env.finger.y, fd = Math.hypot(fdx, fdy);
+            const host = g.mode === 'mill' && g.tgt ? (k >= 2 && g.alt && g.alt.length && showing(g.alt[(k - 2) % g.alt.length]) ? g.alt[(k - 2) % g.alt.length] : g.tgt) : null;
+            if (host) {
+              // 打轉：繞著圖示中心慢慢轉一個小圈，每隻自己的方向；離得遠就先游過去
+              const a = host.live, rx = f.x - a.x, ry = f.y - a.y, dist = Math.hypot(rx, ry);
+              if (!f.millDir || Math.random() < h * 0.08) f.millDir = Math.random() < 0.5 ? -1 : 1;
+              const R = Math.max(6 * s, Math.min(a.hx, a.hy) * 0.45);
+              const tangent = Math.atan2(ry, rx) + f.millDir * Math.PI / 2;
+              const pull = Math.max(-1, Math.min(1, (dist - R) / (R + 1))) * f.millDir * 0.9;   // 圈外往內收、圈內往外放
+              steer = wrap(tangent + pull + f.wob * 0.5 - f.ang) * 1.2;
+              want = (dist > R * 2.5 ? 0.8 : 0.3) * f.len * env.speed;
+            } else if (isLead && g.join) {
+              const o = g.join.members[0];
+              steer = wrap(Math.atan2(o.y - f.y, o.x - f.x) - f.ang) * 1.6;
+              want = 0.8 * f.len * env.speed;
+            } else if (isLead) {
+              if (g.mode === 'curl') steer = g.curlDir * 0.9;
+              else {
+                const meander = g.mAmp * Math.sin(((f.y - g.y0) / g.lambda) * Math.PI * 2 + g.mPh);
+                if (g.tgt) {
+                  const a = g.tgt.live;
+                  steer = wrap(Math.atan2(a.y + g.oy - f.y, a.x + g.ox - f.x) + meander * (g.called === g.tgt ? 0.1 : 0.35) + f.wob - f.ang) * 1.5;
+                  if (g.called === g.tgt) want *= 1.4;                 // 被叫的時候游得比較急
+                } else {
+                  const edge = W / 2 - 40 * s, side = Math.abs(f.x) > edge ? Math.sign(f.x) * Math.min(1, (Math.abs(f.x) - edge) / (30 * s)) * 0.9 : 0;
+                  steer = wrap(Math.PI / 2 + meander + side + f.wob - f.ang) * 1.2;
+                }
+              }
+            } else {
+              // 跟著帶頭的：排在牠後面一點、左右錯開，方向和速度跟牠一致
+              const back = 1.05 * lead.len * Math.ceil(k / 2), sideOff = 0.45 * lead.len * f.side;
+              const lx = Math.cos(lead.ang), ly = Math.sin(lead.ang);
+              const tx = lead.x - lx * back - ly * sideOff, ty = lead.y - ly * back + lx * sideOff;
+              const dd = Math.hypot(tx - f.x, ty - f.y);
+              const toSlot = Math.atan2(ty - f.y, tx - f.x);
+              const aim = dd < 0.7 * lead.len ? lead.ang : toSlot;     // 到了位置就跟牠同方向
+              steer = wrap(aim - f.ang) * 1.6 + f.wob * 0.3;
+              want = lead.speed * Math.max(0.6, Math.min(1.4, dd / (0.9 * lead.len)));
+            }
+            // 太靠近任何一隻就讓開（排斥區約 0.8 個身長，和影片量到的間距相符）
+            for (const o of fish) {
+              if (o === f) continue;
+              const ox = o.x - f.x, oy = o.y - f.y, dd = Math.hypot(ox, oy), zr = 0.8 * f.len;
+              if (dd < zr && dd > 0.01) { steer += (dx * oy - dy * ox > 0 ? -1 : 1) * 1.4 * (1 - dd / zr); if (ox * dx + oy * dy > 0) want *= 0.85; }
+            }
+            if (startle && fd < 55 * s) { f.flee = 0.5; steer += (dx * fdy - dy * fdx > 0 ? 1 : -1) * 4; }
+            f.flee = Math.max(0, f.flee - h);
+            // 螢幕邊緣（還沒要游出去的時候）
+            if (W / 2 - Math.abs(f.x) < f.len * 0.6 && !f.flee) {
+              steer += wrap(Math.atan2(-f.y, -f.x) - f.ang) * 3;
+            }
+            const omega = Math.max(-(f.flee ? 5 : 1.5), Math.min(f.flee ? 5 : 1.5, steer));
+            f.ang += omega * h;
+            pace = 1;   // 穿過縫隙（看不到的地方）時快快游過
+            // 擺尾─滑行
+            if (f.flee) { f.beat = true; f.beatT = Math.max(f.beatT, 0.4); }
+            const goal = f.flee ? 3 * cruise : want * pace;
+            if (f.beat) {
+              f.beatT -= h;
+              f.speed += (goal * 1.2 - f.speed) * Math.min(1, h * (f.flee ? 5 : 1.4));
+              f.amp += (0.09 - f.amp) * Math.min(1, h * 4);
+              if (f.beatT <= 0) { f.beat = false; f.glideT = rnd(0.6, 1.8); }
+            } else {
+              f.glideT -= h;
+              f.speed *= Math.exp(-h / 2.2);
+              f.amp += (0.02 - f.amp) * Math.min(1, h * 1.5);
+              if (f.glideT <= 0 || f.speed < goal * 0.6) { f.beat = true; f.beatT = rnd(0.8, 2.2); }
+            }
+            const freq = f.beat ? Math.max(0.6, f.speed / (0.65 * f.len)) : 0.25;
+            f.phase += h * Math.PI * 2 * freq;
+            const bendT = Math.max(-1.4, Math.min(1.4, (omega * f.len) / Math.max(f.speed, 0.3 * f.len)));
+            f.bend += (bendT - f.bend) * Math.min(1, h * 6);
+            f.x += Math.cos(f.ang) * f.speed * h; f.y += Math.sin(f.ang) * f.speed * h;
+            // 在圖示裡打轉時，整隻魚不出這塊玻璃
+            f.x = Math.max(-W / 2 - f.len, Math.min(W / 2 + f.len, f.x)); f.y = Math.max(-H / 2 - 4 * f.len, f.y);
           }
-          // 手指按住：附近的魚急轉、加速逃開（一次大彎的 C 形起動）
-          if (env.pressing) {
-            const fx = f.x - env.finger.x, fy = f.y - env.finger.y, fd = Math.hypot(fx, fy);
-            if (fd < 60 * s) { f.flee = 0.6; steer += (dx * fy - dy * fx > 0 ? 1 : -1) * 4 * (1 - fd / (60 * s)); }
-          }
-          f.flee = Math.max(0, f.flee - h);
-          const omega = Math.max(-(f.flee ? 5 : 1.5), Math.min(f.flee ? 5 : 1.5, steer));
-          let inGlass = false;
-          for (const a of env.glass) if (rbox(a, f.x, f.y) < 0) { inGlass = true; break; }
-          const pace = inGlass ? 0.85 : 2.2;                 // 穿過縫隙（看不到的地方）時快快游過
-          f.ang += omega * h;
-          // 擺尾─滑行：擺尾時加速、擺幅大；滑行時尾巴幾乎不動，速度慢慢掉
-          if (f.flee) { f.beat = true; f.beatT = Math.max(f.beatT, 0.5); }
-          if (f.beat) {
-            f.beatT -= h;
-            f.speed += ((f.flee ? 3 : 1.25 * pace) * cruise - f.speed) * Math.min(1, h * (f.flee ? 5 : 1.2 * pace));
-            f.amp += (0.09 - f.amp) * Math.min(1, h * 4);
-            if (f.beatT <= 0) { f.beat = false; f.glideT = rnd(0.8, 2.2); }
-          } else {
-            f.glideT -= h;
-            f.speed *= Math.exp(-h / 2.5);
-            f.amp += (0.02 - f.amp) * Math.min(1, h * 1.5);
-            if (f.glideT <= 0 || f.speed < cruise * 0.55 * pace) { f.beat = true; f.beatT = rnd(1, 2.5); }
-          }
-          // 擺尾頻率跟著速度（每擺一次前進約 0.65 個身長）；滑行時只剩很慢的餘擺
-          const freq = f.beat ? Math.max(0.6, f.speed / (0.65 * f.len)) : 0.25;
-          f.phase += h * Math.PI * 2 * freq;
-          // 身體彎曲 = 曲率 × 身長 = 角速度 ÷ 速度 × 身長
-          const bendT = Math.max(-1.4, Math.min(1.4, (omega * f.len) / Math.max(f.speed, 0.3 * f.len)));
-          f.bend += (bendT - f.bend) * Math.min(1, h * 6);
-          f.x += Math.cos(f.ang) * f.speed * h; f.y += Math.sin(f.ang) * f.speed * h;
         }
-        f.alpha = Math.min(1, f.alpha + dt * 0.8);           // 從水底慢慢浮現
-        if (f.y > H / 2 + f.len * 0.7 || Math.abs(f.x) > W / 2 + f.len) spawn(f, env, false);   // 游出畫面：從 Dock 再出現
+        for (const f of g.members) {
+          f.len += (env.size * s * f.k - f.len) * Math.min(1, dt * 2);   // 面板調大小時慢慢長大／縮小
+          f.alpha = 1;
+          f.out = f.y > H / 2 + f.len * 0.7;
+        }
+        // 整群都游出上緣：一起從 Dock 再出現（小群在這時也重新分配）
+        if (g.members.every((f) => f.out)) spawnGroup(g, env, false);
       }
       gap.visible = env.gapAlpha > 0.001 && fish.length > 0;
       return fish.length > 0;

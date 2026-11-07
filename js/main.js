@@ -38,7 +38,7 @@ const DEFAULTS = {
   parallax: true, tiltAmt: 18, viewDist: 4.5, sway: false,
   gyroGain: 1.4, gyroRecenter: 0.25, wallDepth: 0.3, glintGain: 2.2, lightGain: 1.15,
   wallpaper: 'flow', animateWall: !reduced.matches,
-  fishOn: true, fishCount: 7, fishSize: 24, fishSpeed: 1, fishGap: 0,
+  fishOn: true, fishCount: 12, fishSize: 48, fishSpeed: 1, fishGap: 0,
   quality: MOBILE ? 'low' : 'high', maxDpr: Math.min(devicePixelRatio, 2),
   dustDensity: 2.6, dustSweep: 0.9, dustLife: 1.3, dustWind: 55, dustTint: '#d6b4ff', dustTintAmt: 0.55,
 };
@@ -717,8 +717,8 @@ fDust.close();
 
 const fFish = gui.addFolder('鯉魚');
 fFish.add(P, 'fishOn').name('玻璃裡養魚');
-fFish.add(P, 'fishCount', 0, 16, 1).name('數量');
-fFish.add(P, 'fishSize', 10, 30, 0.5).name('大小 (pt)');
+fFish.add(P, 'fishCount', 0, 24, 1).name('數量');
+fFish.add(P, 'fishSize', 10, 80, 0.5).name('大小 (pt)');
 fFish.add(P, 'fishSpeed', 0.2, 2.5, 0.05).name('游速');
 fFish.add(P, 'fishGap', 0, 1, 0.01).name('玻璃之間看得到（淡）');
 fFish.close();
@@ -1072,7 +1072,7 @@ canvas.addEventListener('pointerdown', (e) => {
     return;
   }
   const d = shapeAt(finger);
-  drag = { x: e.clientX, y: e.clientY, d, moved: false, dragging: false, held: false, page: false, lastX: e.clientX, lastT: performance.now(), vx: 0, from: FX.page.x };
+  drag = { x: e.clientX, y: e.clientY, d, moved: false, dragging: false, held: false, page: false, lastX: e.clientX, lastT: performance.now(), vx: 0, from: FX.page.x, t0: performance.now() };
   if (d) d.press.t = 1;
   if (!editMode && (!d || !d.bubble) && FX.page.x < 0.5) {
     clearTimeout(holdTimer);
@@ -1130,6 +1130,7 @@ function tap(d) {
     closeSplit();
     if (d === WALL) document.getElementById('file').click(); else setTimeout(toggleRec, 420);
   } else if (menuOpen || split) closeFloats();
+  else if (d && !d.bubble && !editMode) fish.call(d);               // 點圖示：附近的鯉魚游過來（以為要餵食）
   else if (!d) {
     if (editMode) exitEdit();                                    // 編輯模式點空白 = 完成
     else if (MOBILE && !gui._hidden) gui.hide();
@@ -1545,7 +1546,7 @@ function step(now) {
   const fishDocks = ST.filter((d) => d.inDock && !d.removed && !d.hidden);
   const fishTargets = [...ST.filter((d) => !d.inDock && !d.removed && !d.hidden), MAIN, NEW, PANEL, LENS_W];
   const fishGlass = lastShapes.filter((a) => !(a.d && a.d.app.kind === 'knob'));
-  const fishLive = fish.update(dt, { docks: fishDocks, targets: fishTargets, glass: fishGlass, dockY: L.dock.y, dockHalfW: L.dock.hx, n: P.fishOn ? P.fishCount : 0, size: P.fishSize, speed: reduced.matches ? 0.4 * P.fishSpeed : P.fishSpeed, s: L.s, finger, pressing: !!drag && !drag.page && !drag.ctl, gapAlpha: P.fishOn ? P.fishGap : 0 });
+  const fishLive = fish.update(dt, { docks: fishDocks, targets: fishTargets, glass: fishGlass, dockY: L.dock.y, dockHalfW: L.dock.hx, n: P.fishOn ? P.fishCount : 0, size: P.fishSize, speed: reduced.matches ? 0.4 * P.fishSpeed : P.fishSpeed, s: L.s, finger, pressing: !!drag && !drag.page && !drag.ctl, pressMs: drag && drag.t0 ? performance.now() - drag.t0 : 0, gapAlpha: P.fishOn ? P.fishGap : 0 });
   shared.uFishOn.value = fishLive ? 1 : 0;
   if (fishLive || fishWas) needsRender = true;
   fishWas = fishLive;
