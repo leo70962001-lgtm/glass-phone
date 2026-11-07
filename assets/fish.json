@@ -1,0 +1,59 @@
+{
+ "file": "assets/fish.webp",
+ "rows": 6,
+ "cell": [
+  512,
+  256
+ ],
+ "source": "Gemini, koi-sheet.png",
+ "fish": [
+  {
+   "name": "kohaku",
+   "srcSize": [
+    418,
+    213
+   ],
+   "aspect": 0.51
+  },
+  {
+   "name": "sanke",
+   "srcSize": [
+    417,
+    213
+   ],
+   "aspect": 0.511
+  },
+  {
+   "name": "showa",
+   "srcSize": [
+    418,
+    213
+   ],
+   "aspect": 0.51
+  },
+  {
+   "name": "ogon",
+   "srcSize": [
+    417,
+    213
+   ],
+   "aspect": 0.511
+  },
+  {
+   "name": "asagi",
+   "srcSize": [
+    418,
+    215
+   ],
+   "aspect": 0.514
+  },
+  {
+   "name": "tancho",
+   "srcSize": [
+    418,
+    215
+   ],
+   "aspect": 0.514
+  }
+ ]
+}

@@ -7,6 +7,7 @@ import { createGlass } from './glass.js';
 import { createLens, createInk } from './lens.js';
 import { createPyramid, SIGMA0 } from './pyramid.js';
 import { createTone } from './tone.js';
+import { createFish } from './fish.js';
 import { createDust, DS_END } from './dust.js';
 import { mergeLists } from './liquid.js';
 
@@ -37,6 +38,7 @@ const DEFAULTS = {
   parallax: true, tiltAmt: 18, viewDist: 4.5, sway: false,
   gyroGain: 1.4, gyroRecenter: 0.25, wallDepth: 0.3, glintGain: 2.2, lightGain: 1.15,
   wallpaper: 'flow', animateWall: !reduced.matches,
+  fishOn: true, fishCount: 7, fishSize: 24, fishSpeed: 1, fishGap: 0,
   quality: MOBILE ? 'low' : 'high', maxDpr: Math.min(devicePixelRatio, 2),
   dustDensity: 2.6, dustSweep: 0.9, dustLife: 1.3, dustWind: 55, dustTint: '#d6b4ff', dustTintAmt: 0.55,
 };
@@ -135,6 +137,8 @@ const screenPlane = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), new THREE.Mesh
 scene.add(screenPlane);
 const pyramid = createPyramid(renderer), basePyramid = createPyramid(renderer);
 const tone = createTone(renderer);
+const fish = createFish(renderer);
+scene.add(fish.gap);
 let baseRT = null;                     // 面板蓋到圖示時，下層先畫進這一張，面板才模糊得到圖示
 
 const atlas = new THREE.CanvasTexture(drawAtlas());
@@ -156,6 +160,7 @@ const shared = {
   uBlurK: U(0), uPickLod: U(0), uRefr: U(18), uEdge: U(20), uMag: U(1), uDispL: U(0), uLip: U(0),
   uFrostL: U(0.1), uVibL: U(1.3), uBrightL: U(0), uBelow: U(0.3), uTintAmt: U(0), uTintCol: U(new THREE.Vector3(1, 0.4, 0.2)),
   uRimL: U(0.7), uRimW: U(1.4), uLensK: U(1), uIconTint: U(0.5),
+  uFishTex: U(null), uFishOn: U(0),
 };
 
 // 每塊玻璃的狀態：按壓、刪除／消散、位置、果凍形變、明暗、抖動相位（重建玻璃材質時沿用）
@@ -203,7 +208,7 @@ const saveRemoved = () => store(REMOVED_KEY, ST.filter((d) => d.removed).map((d)
 let screenDirty = true, needsRender = true, labelsDirty = true, menuOpen = false, split = false, editMode = false, layered = false, toneDirty = true, baseStamp = 0;
 const finger = new THREE.Vector2();
 const dust = createDust(scene);
-let tray, icons = [], bubbles = [];
+let tray, icons = [], bubbles = [], lastShapes = [];
 const cellOf = (c) => new THREE.Vector4((c % ATLAS_COLS) / ATLAS_COLS, 1 - (Math.floor(c / ATLAS_COLS) + 1) / ATLAS_ROWS, 1 / ATLAS_COLS, 1 / ATLAS_ROWS);
 const isLens = () => P.mode === 'lens';
 function buildGlass() {
@@ -245,6 +250,7 @@ function applyLayout() {
   screenPlane.scale.set(L.W, L.H, 1);
   shared.uScreenSize.value.set(L.W, L.H);
   screen.resize(L.W, L.H, pixelRatio);
+  fish.resize(L.W, L.H, pixelRatio);
   slots(true);
   placeMenu(true); placeNew(true); placeWidgets(true); placeKnobs(true);
   paintInks();
@@ -417,14 +423,16 @@ function updateShapes() {
     d.mesh.renderOrder = d === MAIN && d.w.x > 80 * s ? 3.5 : 3;
   }
 
+  lastShapes = shapes;
   const lists = mergeLists(shapes, k);
   const pressed = shapes.findIndex((a) => a.d && a.d.press.x > 0.01 && a.d.app.kind !== 'knob');
   const kFor = (a, l) => { let m = Math.max(k, a.mk || 0); for (const j of l) m = Math.max(m, shapes[j].mk || 0); return Math.max(m, 1e-3); };
   shapes.forEach((a, i) => {
     const u = a.m.material.uniforms, l = lists[i];
     u.uHalf.value.set(a.hx, a.hy); u.uRadius.value = a.r;
-    if (a.d) { u.uDsProg.value = a.d.ds ? a.d.ds.prog : -1; a.d.nn = l.length; a.d.live = a; }
+    if (a.d) { u.uDsProg.value = a.d.ds ? a.d.ds.prog : -1; a.d.nn = l.length; }
     u.uNn.value = l.length; u.uK.value = kFor(a, l);
+    a.st.live = a; a.nb = l.map((j) => shapes[j]); a.k = u.uK.value;
     const top = lens ? fillLens(a, l, shapes) : fillRay(a, l, shapes, s);
     const margin = 1.5 * s + (l.length ? u.uK.value : 0);
     u.uBox.value.set(a.hx + margin, a.hy + margin, top);
@@ -707,6 +715,14 @@ fDust.addColor(P, 'dustTint').name('粉塵色調');
 fDust.add(P, 'dustTintAmt', 0, 1, 0.01).name('色調混合');
 fDust.close();
 
+const fFish = gui.addFolder('鯉魚');
+fFish.add(P, 'fishOn').name('玻璃裡養魚');
+fFish.add(P, 'fishCount', 0, 16, 1).name('數量');
+fFish.add(P, 'fishSize', 10, 30, 0.5).name('大小 (pt)');
+fFish.add(P, 'fishSpeed', 0.2, 2.5, 0.05).name('游速');
+fFish.add(P, 'fishGap', 0, 1, 0.01).name('玻璃之間看得到（淡）');
+fFish.close();
+
 const fTools = gui.addFolder('工具');
 fTools.add({ 存成圖片: () => savePng() }, '存成圖片');
 const recCtl = fTools.add({ 錄影: () => toggleRec() }, '錄影').name('錄影／停止');
@@ -731,7 +747,8 @@ function toggleGui() {
 function applyPreset(name) {
   const keep = { wallpaper: P.wallpaper, parallax: P.parallax, sway: P.sway, animateWall: P.animateWall, quality: P.quality, maxDpr: P.maxDpr, tiltAmt: P.tiltAmt, viewDist: P.viewDist,
     dustDensity: P.dustDensity, dustSweep: P.dustSweep, dustLife: P.dustLife, dustWind: P.dustWind, dustTint: P.dustTint, dustTintAmt: P.dustTintAmt,
-    gyroGain: P.gyroGain, gyroRecenter: P.gyroRecenter, wallDepth: P.wallDepth, glintGain: P.glintGain, lightGain: P.lightGain, jelly: P.jelly, touch: P.touch };
+    gyroGain: P.gyroGain, gyroRecenter: P.gyroRecenter, wallDepth: P.wallDepth, glintGain: P.glintGain, lightGain: P.lightGain, jelly: P.jelly, touch: P.touch,
+    fishOn: P.fishOn, fishCount: P.fishCount, fishSize: P.fishSize, fishSpeed: P.fishSpeed, fishGap: P.fishGap };
   const was = P.mode;
   Object.assign(P, DEFAULTS, PRESETS[name], keep);
   curPreset = name;
@@ -1321,6 +1338,7 @@ function setPixelRatio(v) {
   renderer.setPixelRatio(v);
   renderer.setSize(L.W, L.H, false);
   screen.resize(L.W, L.H, v);
+  fish.resize(L.W, L.H, v);
   paintInks();
   labelsDirty = true; screenDirty = true; needsRender = true;
   sync();
@@ -1466,7 +1484,7 @@ function adapt(dt, now) {
 }
 
 // ---------- 迴圈：有變化才重畫 ----------
-let last = performance.now(), lastOverlay = 0, fpsAcc = 0, fpsN = 0, prevRendered = false, toneAt = 0, lumAt = 0, firstTone = true, clockAt = 0;
+let last = performance.now(), lastOverlay = 0, fpsAcc = 0, fpsN = 0, prevRendered = false, toneAt = 0, lumAt = 0, firstTone = true, clockAt = 0, fishWas = false;
 document.addEventListener('visibilitychange', () => { prevRendered = false; last = performance.now(); });
 function step(now) {
   const raw = (now - last) / 1000, dt = Math.min(raw, 0.1);
@@ -1523,6 +1541,14 @@ function step(now) {
     needsRender = true;
   }
   updateUnderlay();
+  // 鯉魚：從 Dock 的圖示出現，一排一排往上游過圖示（只在玻璃裡看得到）
+  const fishDocks = ST.filter((d) => d.inDock && !d.removed && !d.hidden);
+  const fishTargets = [...ST.filter((d) => !d.inDock && !d.removed && !d.hidden), MAIN, NEW, PANEL, LENS_W];
+  const fishGlass = lastShapes.filter((a) => !(a.d && a.d.app.kind === 'knob'));
+  const fishLive = fish.update(dt, { docks: fishDocks, targets: fishTargets, glass: fishGlass, dockY: L.dock.y, dockHalfW: L.dock.hx, n: P.fishOn ? P.fishCount : 0, size: P.fishSize, speed: reduced.matches ? 0.4 * P.fishSpeed : P.fishSpeed, s: L.s, finger, pressing: !!drag && !drag.page && !drag.ctl, gapAlpha: P.fishOn ? P.fishGap : 0 });
+  shared.uFishOn.value = fishLive ? 1 : 0;
+  if (fishLive || fishWas) needsRender = true;
+  fishWas = fishLive;
   // WebKit 有時會讓影格回呼停掉：播放中超過 250 ms 沒回呼，就改看 currentTime
   if (wallVideo && wallVideo.readyState >= 2 && (!hasRVFC || (!wallVideo.paused && performance.now() - videoCbAt > 250)) && wallVideo.currentTime !== videoT) { videoT = wallVideo.currentTime; screenDirty = true; }
   // 文字層重畫要上傳整張貼圖：動畫中最多每秒 30 次，最後一格一定會補上
@@ -1577,6 +1603,8 @@ function renderFrame(now) {
   }
   shared.uLodScreen.value = 0;
   shared.uLodGlyph.value = Math.max(0, Math.log2(240 / (L.icon * pixelRatio)));
+  fish.render();
+  shared.uFishTex.value = fish.texture;
   if (lens) {
     let sTex = screen.texture, bTex = pyramid.texture;
     if (layered) {
@@ -1629,7 +1657,7 @@ window.__advance.off = () => { manual = false; last = performance.now(); };
 window.__P = P; window.__sync = sync;
 window.__app = {
   camera, shared, screen, renderer, step, setWallpaper, tilt, tiltTarget, get icons() { return icons; }, ST, BUB, MAIN, NEW, KIDS, KNOBS, PANEL, LENS_W, TRAY, FX, tone, deleteIcon, restoreAll, enterEdit, exitEdit,
-  openMenu, closeMenu, openSplit, closeSplit, goPage, applyPreset, measureTones, placeKnobs, savePng, toggleRec, linkURL, useFile, setPixelRatio, adapt, noteIdle, ctlAt, ctlBegin, ctlMove, ctlEnd, rowAt, shapeAt,
+  fish, openMenu, closeMenu, openSplit, closeSplit, goPage, applyPreset, measureTones, placeKnobs, savePng, toggleRec, linkURL, useFile, setPixelRatio, adapt, noteIdle, ctlAt, ctlBegin, ctlMove, ctlEnd, rowAt, shapeAt,
   get L() { return L; }, get orderGrid() { return orderGrid; }, get orderDock() { return orderDock; }, get refresh() { return refresh; }, get pixelRatio() { return pixelRatio; }, get layered() { return layered; }, get menuOpen() { return menuOpen; }, get split() { return split; }, get curPreset() { return curPreset; }, get rec() { return rec; }, get baseStamp() { return baseStamp; },
 };
 updateChrome();

@@ -23,7 +23,8 @@ uniform float uRadius, uPresence, uSolid, uTone, uSizeK, uRot, uDsProg, uGlow, u
 uniform vec3 uDsTint, uTouch, uTint, uTintCol;
 uniform int uNn;
 uniform vec4 uNa[MAXN]; uniform vec4 uNb[MAXN]; uniform vec4 uNc[MAXN]; uniform vec4 uNg[MAXN]; uniform vec4 uNt[MAXN];
-uniform sampler2D uScreenTex, uBlurTex, uGlyphTex;
+uniform sampler2D uScreenTex, uBlurTex, uGlyphTex, uFishTex;
+uniform float uFishOn;
 uniform float uBlurK, uPickLod, uRefr, uEdge, uMag, uDispL, uLip, uFrostL, uVibL, uBrightL, uBelow, uTintAmt, uRimL, uRimW, uLensK, uIconTint;
 uniform vec4 uGlyphCell;
 uniform float uHasGlyph, uGlyphHalf, uGlyphScale, uGlyphA, uGlyphOpacity, uLodGlyph, uInk, uFlip;
@@ -147,6 +148,9 @@ void main() {
     col = vec3(seen(p + off * (1.0 - k), lod).r, seen(p + off, lod).g, seen(p + off * (1.0 + k), lod).b);
   } else col = seen(p + off, lod);
   col = toG(col);
+  // 魚：在玻璃裡、表面底下，邊緣一樣被透鏡擠壓（偏移打一點折，霧面也會讓牠糊一點）。先取樣，等圖案畫好再疊上去
+  vec4 fsh = vec4(0.0);
+  if (uFishOn > 0.5) fsh = textureLod(uFishTex, uvOf(p + off * 0.6), lod + min(log2(1.0 + uBlurK), 2.0) * 0.6);
 
   // 表面：鮮豔度 → 霧面（亮玻璃偏白、暗玻璃偏石墨，再帶一點底色）→ 染色 → 亮度
   vec3 under = toG(textureLod(uBlurTex, uvOf(p), uPickLod).rgb);
@@ -178,6 +182,13 @@ void main() {
   // 玻璃上的圖案（融合中的鄰居也要畫，才不會被切開）
   if (uHasGlyph > 0.5) addGlyph(col, p, vec2(0.0), uGlyphHalf, uGlyphCell, uInk, uFlip, uGlyphOpacity * uGlyphA);
   for (int i = 0; i < uNn; i++) addGlyph(col, p, uNa[i].xy, uNc[i].x, uNg[i], uNc[i].z, uNc[i].w, uGlyphOpacity * uNt[i].a);
+  // 魚游在圖案上面；表面的霧和邊緣光再蓋在魚上
+  if (fsh.a > 0.002) {
+    vec3 fc = toG(fsh.rgb / fsh.a);
+    fc = mix(fc, mix(plainVeil, dyedVeil, uBelow), uFrostL * 0.6);
+    col = mix(col, fc, fsh.a);
+    col += uRimL * uLensK * ring * lobes * 0.95 * fsh.a * 0.6;
+  }
 
   col += toG(uDsTint) * dsEdge * 1.3;
   col += (noise(gl_FragCoord.xy) - 0.5) / 255.0;         // 抖色：模糊後的漸層不會出現色階
@@ -198,7 +209,7 @@ export function createLens(shared, own = {}) {
     uTint: { value: new THREE.Vector3(1, 1, 1) },
     uGlyphCell: { value: new THREE.Vector4() }, uHasGlyph: { value: 1 }, uGlyphHalf: { value: 30 }, uGlyphA: { value: 1 }, uGlow: { value: 0 },
     uTouch: { value: new THREE.Vector3() },
-    uRot: { value: 0 }, uDsProg: { value: -1 }, uDsTint: { value: new THREE.Color(0xd6b4ff) },
+    uRot: { value: 0 }, uDsProg: { value: -1 }, uDsTint: { value: new THREE.Color(0xd6b4ff) }, uFishTex: { value: null }, uFishOn: { value: 0 },
     uNn: { value: 0 }, uK: { value: 1 }, uNa: { value: vecs() }, uNb: { value: vecs() }, uNc: { value: vecs() }, uNg: { value: vecs() }, uNt: { value: vecs() },
     ...shared,
     ...own,

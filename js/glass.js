@@ -36,6 +36,7 @@ uniform vec3 uTint, uLightW, uLightL;
 uniform sampler2D uScreenTex; uniform vec2 uScreenSize, uCenter;
 uniform sampler2D uGlyphTex; uniform vec4 uGlyphCell; uniform float uGlyphZ, uGlyphHalf, uGlyphOpacity, uHasGlyph, uGlyphScale, uGlyphFrost, uHaze;
 uniform float uLodScreen, uLodGlyph, uPixAngle;
+uniform sampler2D uFishTex; uniform float uFishOn;
 varying vec3 vLocal; varying vec3 vCamLocal;
 
 float sdRR(vec2 p, vec2 b, float r) { vec2 q = abs(p) - b + r; return min(max(q.x, q.y), 0.0) + length(max(q, 0.0)) - r; }
@@ -79,9 +80,12 @@ vec3 env(vec3 dl) {
   return c * uEnvI;
 }
 
-vec3 screenAt(vec2 xy, float lod) {
+vec2 screenUV(vec2 xy) {
   float c = cos(uRot), s = sin(uRot);                       // 編輯模式抖動時圖示會轉
-  vec2 uv = (vec2(c * xy.x - s * xy.y, s * xy.x + c * xy.y) + uCenter) / uScreenSize + 0.5;
+  return (vec2(c * xy.x - s * xy.y, s * xy.x + c * xy.y) + uCenter) / uScreenSize + 0.5;
+}
+vec3 screenAt(vec2 xy, float lod) {
+  vec2 uv = screenUV(xy);
   if (uv.x < 0.0 || uv.y < 0.0 || uv.x > 1.0 || uv.y > 1.0) return vec3(0.0);
   vec3 col = textureLod(uScreenTex, uv, lod).rgb;
   return max(mix(vec3(dot(col, vec3(0.2126, 0.7152, 0.0722))), col, uVib), vec3(0.0));     // 鮮豔度
@@ -103,6 +107,15 @@ void addGlyph(vec3 p, vec3 q, vec3 d, float gz, float gh, vec4 cell, vec2 off, f
   trans *= 1.0 - a;
 }
 
+// 魚在玻璃裡的一個水平面上：光線穿過那個平面時疊上魚層（魚層是預乘 alpha）
+void addFish(vec3 p, vec3 q, vec3 d, float fz, float dist, vec3 kA, inout vec3 acc, inout float trans) {
+  if ((p.z - fz) * (q.z - fz) >= 0.0) return;
+  float tf = (fz - p.z) / d.z;
+  vec4 c = textureLod(uFishTex, screenUV((p + d * tf).xy), 0.0);
+  acc += trans * exp(-kA * (dist + tf)) * c.rgb;
+  trans *= 1.0 - c.a;
+}
+
 // 記下最後落到螢幕的位置，低畫質色散用
 vec2 gExit; float gLod, gWeight;
 
@@ -121,6 +134,8 @@ vec3 traceRay(vec3 p, vec3 d, float ior) {
     }
     if (contact && d.z < 0.0) t = max(-p.z / d.z, 0.0);
     vec3 q = p + d * t;
+    // 魚在圖案上面一層（光線往下先穿過魚）
+    if (uFishOn > 0.5) addFish(p, q, d, max(uGlyphZ, uZb + uHeight * 0.4) + (uZb + uHeight - max(uGlyphZ, uZb + uHeight * 0.4)) * 0.5, dist, kA, acc, trans);
     if (uHasGlyph > 0.5) addGlyph(p, q, d, uGlyphZ, uGlyphHalf, uGlyphCell, vec2(0.0), dist, kA, acc, trans);
     for (int i = 0; i < uNn; i++) if (uNc[i].y > 0.0) addGlyph(p, q, d, uNc[i].z, uNc[i].y, uNg[i], uNa[i].xy, dist, kA, acc, trans);
     dist += t;
@@ -251,7 +266,7 @@ export function createGlass(shared, own, quality = 'high') {
     uTint: { value: new THREE.Vector3(1, 1, 1) },
     uGlyphCell: { value: new THREE.Vector4() }, uHasGlyph: { value: 1 }, uGlyphZ: { value: 1 }, uGlyphHalf: { value: 30 }, uGlow: { value: 0 },
     uTouch: { value: new THREE.Vector3() },
-    uRot: { value: 0 }, uDsProg: { value: -1 }, uDsTint: { value: new THREE.Color(0xd6b4ff) },
+    uRot: { value: 0 }, uDsProg: { value: -1 }, uDsTint: { value: new THREE.Color(0xd6b4ff) }, uFishTex: { value: null }, uFishOn: { value: 0 },
     uNn: { value: 0 }, uK: { value: 1 }, uNa: { value: vecs() }, uNb: { value: vecs() }, uNc: { value: vecs() }, uNg: { value: vecs() },
     ...shared,
     ...own,
