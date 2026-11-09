@@ -13,6 +13,7 @@ import { createDust, DS_END } from './dust.js';
 import { mergeLists } from './liquid.js';
 
 const MOBILE = matchMedia('(pointer: coarse)').matches;
+const VER = new URL(import.meta.url).search;   // main.js?v=…：清單和 main.js 同一版，不會拿到快取裡的舊清單
 const reduced = matchMedia('(prefers-reduced-motion: reduce)');
 const clamp = THREE.MathUtils.clamp;
 const smooth01 = (x) => { x = clamp(x, 0, 1); return x * x * (3 - 2 * x); };
@@ -563,34 +564,62 @@ function measureTones(snap = false) {
 const wallOptions = { '流光（程式）': 'flow' };
 const texLoader = new THREE.TextureLoader();
 let wallVideo = null, videoT = -1, videoCbAt = 0;
+let wallReady = false, wallId = 0;       // wallReady：這張桌布（靜態墊底或影片）已經顯示出來了
 const hasRVFC = 'requestVideoFrameCallback' in HTMLVideoElement.prototype;
 // 影片桌布（ComfyUI 算的循環）：每個新影格才重算螢幕層
-function loadVideo(url) {
+// 有靜態圖墊底時，等影片真的開始播才換上去：網路慢、省電模式擋自動播放、影片載不到，桌布都還看得到
+function loadVideo(url, hasStill = false) {
   const v = document.createElement('video');
   Object.assign(v, { src: url, muted: true, loop: true, playsInline: true, crossOrigin: 'anonymous', preload: 'auto' });
   v.setAttribute('playsinline', '');
+  let shown = false;
+  const show = () => {
+    if (shown || wallVideo !== v) return;
+    shown = true;
+    const old = screen.uniforms.uWallTex.value;
+    const t = new THREE.VideoTexture(v);
+    t.needsUpdate = true;                     // 第一格直接上傳，不等影格回呼（沒回呼時會是全黑）
+    screen.setWallpaper(t);
+    if (hasStill && !old.isVideoTexture) old.dispose();
+    wallReady = true; screenDirty = true; toneDirty = true;
+  };
   v.addEventListener('loadeddata', () => {
     if (wallVideo !== v) return;
-    screen.setWallpaper(new THREE.VideoTexture(v));
-    screenDirty = true; toneDirty = true;
+    if (!hasStill) show();
     if (P.animateWall) v.play().catch(() => {});
   }, { once: true });
-  const onFrame = () => { if (wallVideo !== v) return; screenDirty = true; videoCbAt = performance.now(); v.requestVideoFrameCallback(onFrame); };
+  v.addEventListener('timeupdate', () => { if (v.currentTime > 0) show(); });
+  const onFrame = () => { if (wallVideo !== v) return; show(); screenDirty = true; videoCbAt = performance.now(); v.requestVideoFrameCallback(onFrame); };
   if (hasRVFC) v.requestVideoFrameCallback(onFrame);
   v.load();
+  if (P.animateWall) v.play().catch(() => {});  // iOS 在行動網路不會預載，要先 play 才等得到 loadeddata；被擋的話第一次觸控會再試
   return v;
 }
 function stopVideo() { if (wallVideo) { wallVideo.pause(); wallVideo.removeAttribute('src'); wallVideo.load(); wallVideo = null; } }
 const wallFlow = new Set();             // wallpapers.json 裡標 flow 的桌布：水面加一層緩慢的流動
 const wallPlants = new Map();           // wallpapers.json 裡標 plants 的桌布：荷葉、荷花是另一層，各自會動
+const wallStill = new Map();            // wallpapers.json 裡標 still 的影片：影片開始播之前先顯示這張
 function setWallpaper(key) {
   screen.uniforms.uFlow.value = wallFlow.has(key) ? 1 : 0;
   plants.set(wallPlants.get(key) || null);
   if (key === 'upload') { document.getElementById('file').click(); return; }
   stopVideo();
+  const id = ++wallId;
+  wallReady = false;
   if (key === 'flow') { screen.setWallpaper(null); screenDirty = true; toneDirty = true; return; }
-  if (/\.(webm|mp4)$/i.test(key)) { wallVideo = loadVideo(key); return; }
-  texLoader.load(key, (t) => { screen.setWallpaper(t); screenDirty = true; toneDirty = true; reform(); });
+  if (/\.(webm|mp4)$/i.test(key)) {
+    const still = wallStill.get(key);
+    wallVideo = loadVideo(key, !!still);
+    if (still) texLoader.load(still, (t) => {
+      if (id !== wallId || wallReady) { t.dispose(); return; }    // 影片比靜態圖先到，就不用墊了
+      screen.setWallpaper(t); wallReady = true; screenDirty = true; toneDirty = true;
+    });
+    return;
+  }
+  texLoader.load(key, (t) => {
+    if (id !== wallId) { t.dispose(); return; }
+    screen.setWallpaper(t); wallReady = true; screenDirty = true; toneDirty = true; reform();
+  });
 }
 function playWall() {
   if (wallVideo) { if (P.animateWall) wallVideo.play().catch(() => {}); else wallVideo.pause(); }
@@ -601,6 +630,7 @@ function useFile(f) {
   screen.uniforms.uFlow.value = 0;
   plants.set(null);
   stopVideo();
+  wallId++;
   if (f.type.startsWith('video/')) { wallVideo = loadVideo(url); reform(); return true; }
   texLoader.load(url, (t) => { screen.setWallpaper(t); screenDirty = true; toneDirty = true; reform(); });
   return true;
@@ -772,10 +802,10 @@ function applyPreset(name) {
 }
 
 // 有 assets/wallpapers.json 就加進選單，第一個當預設（ComfyUI 動畫）
-fetch('assets/wallpapers.json').then((r) => (r.ok ? r.json() : [])).then((list) => {
+fetch('assets/wallpapers.json' + VER).then((r) => (r.ok ? r.json() : [])).then((list) => {
   if (!list.length) return;
   const opts = {};
-  for (const w of list) { opts[w.name] = w.file; if (w.flow) wallFlow.add(w.file); if (w.plants) wallPlants.set(w.file, w.plants); }
+  for (const w of list) { opts[w.name] = w.file; if (w.flow) wallFlow.add(w.file); if (w.plants) wallPlants.set(w.file, w.plants + VER); if (w.still) wallStill.set(w.file, w.still); }
   wallCtl.options({ ...opts, ...wallOptions, '上傳圖片／影片…': 'upload' }).name('桌布').onChange(setWallpaper);
   P.wallpaper = list[0].file; wallCtl.updateDisplay();
   setWallpaper(P.wallpaper);
@@ -1560,7 +1590,11 @@ function step(now) {
   if (fishLive || fishWas) needsRender = true;
   fishWas = fishLive;
   // WebKit 有時會讓影格回呼停掉：播放中超過 250 ms 沒回呼，就改看 currentTime
-  if (wallVideo && wallVideo.readyState >= 2 && (!hasRVFC || (!wallVideo.paused && performance.now() - videoCbAt > 250)) && wallVideo.currentTime !== videoT) { videoT = wallVideo.currentTime; screenDirty = true; }
+  if (wallVideo && wallVideo.readyState >= 2 && (!hasRVFC || (!wallVideo.paused && performance.now() - videoCbAt > 250)) && wallVideo.currentTime !== videoT) {
+    videoT = wallVideo.currentTime; screenDirty = true;
+    const wt = screen.uniforms.uWallTex.value;
+    if (wt.isVideoTexture) wt.needsUpdate = true;              // VideoTexture 也靠影格回呼更新，回呼停了要自己標
+  }
   // 文字層重畫要上傳整張貼圖：動畫中最多每秒 30 次，最後一格一定會補上
   if (labelsDirty && now - lastOverlay >= 33) { redrawOverlay(); labelsDirty = false; lastOverlay = now; }
   if (active) {
@@ -1601,11 +1635,11 @@ function renderFrame(now) {
   updateCamera();
   if (screenDirty) {
     if (plants.active) {
-      plants.render(plantT, Math.min(0.1, (now - plantAt) / 1000), !!wallVideo && wallVideo.readyState >= 2 && !!screen.uniforms.uWallTex.value.isVideoTexture);
+      plants.render(plantT, Math.min(0.1, (now - plantAt) / 1000), wallReady);
       plantAt = now;
       screen.uniforms.uPlantTex.value = plants.texture;
     }
-    screen.uniforms.uPlantOn.value = plants.active ? 1 : 0;
+    screen.uniforms.uPlantOn.value = plants.active && wallReady ? 1 : 0;
     screen.render();
     if (lens) {
       const maxLod = Math.max(Math.log2(Math.max(shared.uBlurK.value, 1)), shared.uPickLod.value);
@@ -1680,7 +1714,7 @@ window.__advance.off = () => { manual = false; last = performance.now(); };
 window.__P = P; window.__sync = sync;
 window.__app = {
   camera, shared, screen, renderer, step, setWallpaper, tilt, tiltTarget, get icons() { return icons; }, ST, BUB, MAIN, NEW, KIDS, KNOBS, PANEL, LENS_W, TRAY, FX, tone, deleteIcon, restoreAll, enterEdit, exitEdit,
-  fish, plants, openMenu, closeMenu, openSplit, closeSplit, goPage, applyPreset, measureTones, placeKnobs, savePng, toggleRec, linkURL, useFile, setPixelRatio, adapt, noteIdle, ctlAt, ctlBegin, ctlMove, ctlEnd, rowAt, shapeAt,
+  fish, plants, wallStill, wallPlants, get wallVideo() { return wallVideo; }, get wallReady() { return wallReady; }, playWall, openMenu, closeMenu, openSplit, closeSplit, goPage, applyPreset, measureTones, placeKnobs, savePng, toggleRec, linkURL, useFile, setPixelRatio, adapt, noteIdle, ctlAt, ctlBegin, ctlMove, ctlEnd, rowAt, shapeAt,
   get L() { return L; }, get orderGrid() { return orderGrid; }, get orderDock() { return orderDock; }, get refresh() { return refresh; }, get pixelRatio() { return pixelRatio; }, get layered() { return layered; }, get menuOpen() { return menuOpen; }, get split() { return split; }, get curPreset() { return curPreset; }, get rec() { return rec; }, get baseStamp() { return baseStamp; },
 };
 updateChrome();

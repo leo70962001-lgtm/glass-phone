@@ -113,7 +113,7 @@ export function createPlants(renderer) {
         build(data, t);
       }).catch(() => { /* 沒有圖層就只有水面 */ });
     },
-    // wallReady：水面影片有畫面了才淡入，免得葉子疊在上一張桌布上
+    // wallReady：水面（靜態墊底或影片）有畫面了才淡入，免得葉子疊在上一張桌布上
     render(t, dt, wallReady) {
       if (!this.active) return;
       if (wallReady) fade = Math.min(1, fade + dt / 0.7);

@@ -15,7 +15,7 @@ const frag = /* glsl */`
 #define MAXI ${MAX_OBJ}
 #define MAXU ${MAX_UNDER}
 uniform sampler2D uWallTex; uniform float uWallMode; uniform vec4 uWallUV; uniform float uTime; uniform float uFlow;
-uniform sampler2D uPlantTex; uniform float uPlantOn;
+uniform sampler2D uPlantTex; uniform float uPlantOn; uniform float uWallRaw;
 uniform vec2 uWallShift; uniform float uWallZoom;
 uniform sampler2D uOverlay; uniform vec2 uScreen;
 uniform vec4 uObjA[MAXI]; uniform vec4 uObjB[MAXI]; uniform vec4 uObjC[MAXI]; uniform int uCount;
@@ -63,6 +63,12 @@ vec3 procWall(vec2 uv, float t) {
   return col;
 }
 
+// three.js 上傳影片貼圖時不做 sRGB 解碼（內建材質才會在 shader 裡解），這裡要自己解，不然影片桌布會偏淡
+vec3 wallAt(vec2 uv) {
+  vec3 c = texture2D(uWallTex, uv).rgb;
+  return uWallRaw > 0.5 ? mix(c / 12.92, pow((c + 0.055) / 1.055, vec3(2.4)), step(0.04045, c)) : c;
+}
+
 void main() {
   vec2 p = (vUv - 0.5) * uScreen;
   vec2 wuv = (vUv - 0.5) / uWallZoom + 0.5 - uWallShift;      // 桌布景深視差
@@ -70,7 +76,7 @@ void main() {
   if (uWallMode < 0.5) wall = procWall(wuv, uTime);
   else {
     vec2 tuv = uWallUV.xy + wuv * uWallUV.zw;
-    wall = texture2D(uWallTex, tuv).rgb;
+    wall = wallAt(tuv);
     // 池塘桌布：只有青綠色的水面慢慢流動（荷葉偏綠、睡蓮偏白，都不動）。兩層緩慢移動的波紋把取樣點推開一點點
     if (uFlow > 0.0) {
       float water = smoothstep(0.03, 0.12, wall.b - wall.r) * (1.0 - smoothstep(0.55, 0.8, min(wall.r, min(wall.g, wall.b))));
@@ -78,7 +84,7 @@ void main() {
       float t = uTime;
       vec2 d = vec2(sin(q.y * 1.3 - t * 0.55 + sin(q.x * 1.7 + t * 0.21) * 1.4), cos(q.x * 1.1 + t * 0.37 + sin(q.y * 1.9 - t * 0.43)));
       d += 0.5 * vec2(sin(q.y * 3.1 - t * 0.9), cos(q.x * 2.7 + t * 0.8));
-      vec3 moved = texture2D(uWallTex, tuv + d * 0.0022 * uFlow * uWallUV.zw).rgb;
+      vec3 moved = wallAt(tuv + d * 0.0022 * uFlow * uWallUV.zw);
       float water2 = smoothstep(0.03, 0.12, moved.b - moved.r) * (1.0 - smoothstep(0.55, 0.8, min(moved.r, min(moved.g, moved.b))));   // 推開後取到的也要是水，荷葉邊才不會閃
       wall = mix(wall, moved, water * water2);
     }
@@ -189,7 +195,7 @@ export function createScreenLayer(renderer) {
   blank.needsUpdate = true;
 
   const uniforms = {
-    uWallTex: { value: blank }, uWallMode: { value: 0 }, uWallUV: { value: new THREE.Vector4(0, 0, 1, 1) }, uTime: { value: 0 }, uFlow: { value: 0 }, uPlantTex: { value: blank }, uPlantOn: { value: 0 },
+    uWallTex: { value: blank }, uWallMode: { value: 0 }, uWallUV: { value: new THREE.Vector4(0, 0, 1, 1) }, uTime: { value: 0 }, uFlow: { value: 0 }, uPlantTex: { value: blank }, uPlantOn: { value: 0 }, uWallRaw: { value: 0 },
     uWallShift: { value: new THREE.Vector2() }, uWallZoom: { value: 1 },
     uOverlay: { value: overlay }, uScreen: { value: new THREE.Vector2(375, 812) },
     uObjA: { value: Array.from({ length: MAX_OBJ }, () => new THREE.Vector4()) },
@@ -241,6 +247,7 @@ export function createScreenLayer(renderer) {
       tex.minFilter = video ? THREE.LinearFilter : THREE.LinearMipmapLinearFilter;
       tex.anisotropy = 4;
       uniforms.uWallTex.value = tex;
+      uniforms.uWallRaw.value = video ? 1 : 0;
       uniforms.uWallMode.value = 1;
       fit();
     },
