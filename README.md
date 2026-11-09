@@ -45,7 +45,7 @@ node server.js
 - `js/main.js` 離軸相機、陀螺儀（依螢幕方向校正）、阻尼彈簧（固定 120 Hz）、拖曳／換位／Dock、型變面板、分裂、換頁、控制元件、存圖／錄影／連結、依需要重畫、自動解析度。面板蓋到圖示時會多畫一層，面板才模糊得到底下的圖示。
 
 ## 桌布素材
-- `assets/pond2.jpg`、`assets/pond2-loop.mp4|webm`（預設，水彩池塘）：使用者給的參考圖只取池塘部分的風格，用文字描述給 Gemini（不上傳那張圖），原檔 `D:\ai\gemini\glass-phone\wallpaper\pond2.png` → H3 → `loop_trim.py ... auto 16`。H3 主要動的是漣漪和光紋，所以螢幕層另外加一層水流（wallpapers.json 的 `"flow": 1`）：只推動青綠色的水面（推開後取到的也要是水），荷葉和睡蓮不動，跟著影片影格更新
+- `assets/pond2.jpg`、`assets/pond2w-loop.mp4|webm`（預設，水彩池塘）：使用者給的參考圖只取池塘部分的風格，用文字描述給 Gemini（不上傳那張圖），原檔 `D:\ai\gemini\glass-phone\wallpaper\pond2.png` → H3 → `loop_trim.py ... auto 16`。H3 不太會動荷葉，所以拆層：`tools/pond_layers.py` 把荷葉（18 片）和荷花（5 朵）切成圖集 `assets/pond2-plants.webp|json`，葉下的水補滿 → `tools/comfy/pond2-water.png` → H3 只算水面（`assets/pond2w-loop.mp4|webm`）。`js/plants.js` 把每片畫到一張透明 RT，各自漂移、旋轉（慢湧浪＋各自相位），花跟著父葉走再多晃一點，影子跟著葉子走；螢幕層用和桌布同一組 UV 疊上去（wallpapers.json 的 `"plants"`）。水面另外有一層流動（`"flow": 1`）
 - `assets/pond1.jpg`、`assets/pond1-loop.mp4|webm`（卵石池塘）：Gemini 生的池塘俯視圖（沒有魚，原檔 `D:\ai\gemini\glass-phone\wallpaper\pond1.png`）→ 本機 ComfyUI H3 首幀＝尾幀 → `py tools/loop_trim.py <raw.webm> assets/pond1-loop - auto 16`：丟掉開頭的過渡、頭尾交叉淡化 16 格（這支 H3 的最後一格沒有回到第一格），約 3 秒循環
 - `assets/fish.webp` + `fish.json`：Gemini 生成的六種錦鯉俯視圖（原檔 `D:\ai\gemini\glass-phone\fish\koi-sheet.png`），`py tools/fish_atlas.py <原檔>` 去背並排成一格一隻
 - `assets/silk1.jpg`：Gemini 生成（原檔 `D:\ai\gemini\glass-phone\wallpaper\silk1.png`）

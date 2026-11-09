@@ -8,6 +8,7 @@ import { createLens, createInk } from './lens.js';
 import { createPyramid, SIGMA0 } from './pyramid.js';
 import { createTone } from './tone.js';
 import { createFish } from './fish.js';
+import { createPlants } from './plants.js';
 import { createDust, DS_END } from './dust.js';
 import { mergeLists } from './liquid.js';
 
@@ -38,7 +39,7 @@ const DEFAULTS = {
   parallax: true, tiltAmt: 18, viewDist: 4.5, sway: false,
   gyroGain: 1.4, gyroRecenter: 0.25, wallDepth: 0.3, glintGain: 2.2, lightGain: 1.15,
   wallpaper: 'flow', animateWall: !reduced.matches,
-  fishOn: true, fishCount: 12, fishSize: 48, fishSpeed: 1, fishGap: 0,
+  fishOn: true, fishCount: 12, fishSize: 72, fishSpeed: 0.75, fishGap: 0,
   quality: MOBILE ? 'low' : 'high', maxDpr: Math.min(devicePixelRatio, 2),
   dustDensity: 2.6, dustSweep: 0.9, dustLife: 1.3, dustWind: 55, dustTint: '#d6b4ff', dustTintAmt: 0.55,
 };
@@ -138,6 +139,8 @@ scene.add(screenPlane);
 const pyramid = createPyramid(renderer), basePyramid = createPyramid(renderer);
 const tone = createTone(renderer);
 const fish = createFish(renderer);
+const plants = createPlants(renderer);
+let plantT = 0, plantAt = 0;
 scene.add(fish.gap);
 let baseRT = null;                     // 面板蓋到圖示時，下層先畫進這一張，面板才模糊得到圖示
 
@@ -579,8 +582,10 @@ function loadVideo(url) {
 }
 function stopVideo() { if (wallVideo) { wallVideo.pause(); wallVideo.removeAttribute('src'); wallVideo.load(); wallVideo = null; } }
 const wallFlow = new Set();             // wallpapers.json 裡標 flow 的桌布：水面加一層緩慢的流動
+const wallPlants = new Map();           // wallpapers.json 裡標 plants 的桌布：荷葉、荷花是另一層，各自會動
 function setWallpaper(key) {
   screen.uniforms.uFlow.value = wallFlow.has(key) ? 1 : 0;
+  plants.set(wallPlants.get(key) || null);
   if (key === 'upload') { document.getElementById('file').click(); return; }
   stopVideo();
   if (key === 'flow') { screen.setWallpaper(null); screenDirty = true; toneDirty = true; return; }
@@ -593,6 +598,8 @@ function playWall() {
 function useFile(f) {
   if (!f || !/^(image|video)\//.test(f.type)) return false;
   const url = URL.createObjectURL(f);
+  screen.uniforms.uFlow.value = 0;
+  plants.set(null);
   stopVideo();
   if (f.type.startsWith('video/')) { wallVideo = loadVideo(url); reform(); return true; }
   texLoader.load(url, (t) => { screen.setWallpaper(t); screenDirty = true; toneDirty = true; reform(); });
@@ -720,7 +727,7 @@ fDust.close();
 const fFish = gui.addFolder('鯉魚');
 fFish.add(P, 'fishOn').name('玻璃裡養魚');
 fFish.add(P, 'fishCount', 0, 24, 1).name('數量');
-fFish.add(P, 'fishSize', 10, 80, 0.5).name('大小 (pt)');
+fFish.add(P, 'fishSize', 10, 120, 0.5).name('大小 (pt)');
 fFish.add(P, 'fishSpeed', 0.2, 2.5, 0.05).name('游速');
 fFish.add(P, 'fishGap', 0, 1, 0.01).name('玻璃之間看得到（淡）');
 fFish.close();
@@ -768,7 +775,7 @@ function applyPreset(name) {
 fetch('assets/wallpapers.json').then((r) => (r.ok ? r.json() : [])).then((list) => {
   if (!list.length) return;
   const opts = {};
-  for (const w of list) { opts[w.name] = w.file; if (w.flow) wallFlow.add(w.file); }
+  for (const w of list) { opts[w.name] = w.file; if (w.flow) wallFlow.add(w.file); if (w.plants) wallPlants.set(w.file, w.plants); }
   wallCtl.options({ ...opts, ...wallOptions, '上傳圖片／影片…': 'upload' }).name('桌布').onChange(setWallpaper);
   P.wallpaper = list[0].file; wallCtl.updateDisplay();
   setWallpaper(P.wallpaper);
@@ -1565,6 +1572,12 @@ function step(now) {
 
   if (P.animateWall && screen.uniforms.uWallMode.value < 0.5) { screen.uniforms.uTime.value = t; screenDirty = true; }
   else if (P.animateWall && screen.uniforms.uFlow.value > 0) screen.uniforms.uTime.value = t;   // 水流跟著影片的影格更新，不多重畫
+  // 荷葉、荷花有自己的時鐘：影片沒有新影格時（自動播放被擋、影片卡住）也照樣動，最多每秒 24 次
+  if (plants.active) {
+    const moving = P.animateWall && !reduced.matches;
+    if (moving) plantT += dt;
+    if ((moving || plants.fading) && now - plantAt > 41) screenDirty = true;
+  }
   if (screenDirty) needsRender = true;
   if (rec) needsRender = true;                                  // 錄影時每一幀都畫，影片才是均勻的
   if (!needsRender) {
@@ -1587,6 +1600,12 @@ function renderFrame(now) {
   const lens = isLens();
   updateCamera();
   if (screenDirty) {
+    if (plants.active) {
+      plants.render(plantT, Math.min(0.1, (now - plantAt) / 1000), !!wallVideo && wallVideo.readyState >= 2 && !!screen.uniforms.uWallTex.value.isVideoTexture);
+      plantAt = now;
+      screen.uniforms.uPlantTex.value = plants.texture;
+    }
+    screen.uniforms.uPlantOn.value = plants.active ? 1 : 0;
     screen.render();
     if (lens) {
       const maxLod = Math.max(Math.log2(Math.max(shared.uBlurK.value, 1)), shared.uPickLod.value);
@@ -1661,7 +1680,7 @@ window.__advance.off = () => { manual = false; last = performance.now(); };
 window.__P = P; window.__sync = sync;
 window.__app = {
   camera, shared, screen, renderer, step, setWallpaper, tilt, tiltTarget, get icons() { return icons; }, ST, BUB, MAIN, NEW, KIDS, KNOBS, PANEL, LENS_W, TRAY, FX, tone, deleteIcon, restoreAll, enterEdit, exitEdit,
-  fish, openMenu, closeMenu, openSplit, closeSplit, goPage, applyPreset, measureTones, placeKnobs, savePng, toggleRec, linkURL, useFile, setPixelRatio, adapt, noteIdle, ctlAt, ctlBegin, ctlMove, ctlEnd, rowAt, shapeAt,
+  fish, plants, openMenu, closeMenu, openSplit, closeSplit, goPage, applyPreset, measureTones, placeKnobs, savePng, toggleRec, linkURL, useFile, setPixelRatio, adapt, noteIdle, ctlAt, ctlBegin, ctlMove, ctlEnd, rowAt, shapeAt,
   get L() { return L; }, get orderGrid() { return orderGrid; }, get orderDock() { return orderDock; }, get refresh() { return refresh; }, get pixelRatio() { return pixelRatio; }, get layered() { return layered; }, get menuOpen() { return menuOpen; }, get split() { return split; }, get curPreset() { return curPreset; }, get rec() { return rec; }, get baseStamp() { return baseStamp; },
 };
 updateChrome();

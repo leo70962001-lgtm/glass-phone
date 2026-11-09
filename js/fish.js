@@ -338,7 +338,7 @@ export function createFish(renderer) {
             if (startle && fd < 55 * s) { f.flee = 0.5; steer += (dx * fdy - dy * fdx > 0 ? 1 : -1) * 4; }
             f.flee = Math.max(0, f.flee - h);
             // 螢幕邊緣（還沒要游出去的時候）
-            if (W / 2 - Math.abs(f.x) < f.len * 0.6 && !f.flee) {
+            if (W / 2 - Math.abs(f.x) < Math.min(f.len * 0.6, 36 * s) && !f.flee) {
               steer += wrap(Math.atan2(-f.y, -f.x) - f.ang) * 3;
             }
             const omega = Math.max(-(f.flee ? 5 : 1.5), Math.min(f.flee ? 5 : 1.5, steer));

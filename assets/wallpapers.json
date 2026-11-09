@@ -1,5 +1,5 @@
 [
-  { "name": "水彩池塘（ComfyUI）", "file": "assets/pond2-loop.mp4", "flow": 1 },
+  { "name": "水彩池塘（ComfyUI）", "file": "assets/pond2w-loop.mp4", "flow": 1, "plants": "assets/pond2-plants.json" },
   { "name": "水彩池塘靜態（Gemini）", "file": "assets/pond2.jpg", "flow": 1 },
   { "name": "卵石池塘（ComfyUI）", "file": "assets/pond1-loop.mp4" },
   { "name": "卵石池塘靜態（Gemini）", "file": "assets/pond1.jpg" },

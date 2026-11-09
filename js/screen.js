@@ -15,6 +15,7 @@ const frag = /* glsl */`
 #define MAXI ${MAX_OBJ}
 #define MAXU ${MAX_UNDER}
 uniform sampler2D uWallTex; uniform float uWallMode; uniform vec4 uWallUV; uniform float uTime; uniform float uFlow;
+uniform sampler2D uPlantTex; uniform float uPlantOn;
 uniform vec2 uWallShift; uniform float uWallZoom;
 uniform sampler2D uOverlay; uniform vec2 uScreen;
 uniform vec4 uObjA[MAXI]; uniform vec4 uObjB[MAXI]; uniform vec4 uObjC[MAXI]; uniform int uCount;
@@ -81,6 +82,8 @@ void main() {
       float water2 = smoothstep(0.03, 0.12, moved.b - moved.r) * (1.0 - smoothstep(0.55, 0.8, min(moved.r, min(moved.g, moved.b))));   // 推開後取到的也要是水，荷葉邊才不會閃
       wall = mix(wall, moved, water * water2);
     }
+    // 荷葉、荷花：另一層（plants.js），和桌布用同一組 UV
+    if (uPlantOn > 0.5) { vec4 pl = texture2D(uPlantTex, tuv); wall = wall * (1.0 - pl.a) + pl.rgb; }
   }
   // 軌道畫在螢幕層，上面的滑塊透鏡才折射得到
   for (int i = 0; i < MAXU; i++) {
@@ -186,7 +189,7 @@ export function createScreenLayer(renderer) {
   blank.needsUpdate = true;
 
   const uniforms = {
-    uWallTex: { value: blank }, uWallMode: { value: 0 }, uWallUV: { value: new THREE.Vector4(0, 0, 1, 1) }, uTime: { value: 0 }, uFlow: { value: 0 },
+    uWallTex: { value: blank }, uWallMode: { value: 0 }, uWallUV: { value: new THREE.Vector4(0, 0, 1, 1) }, uTime: { value: 0 }, uFlow: { value: 0 }, uPlantTex: { value: blank }, uPlantOn: { value: 0 },
     uWallShift: { value: new THREE.Vector2() }, uWallZoom: { value: 1 },
     uOverlay: { value: overlay }, uScreen: { value: new THREE.Vector2(375, 812) },
     uObjA: { value: Array.from({ length: MAX_OBJ }, () => new THREE.Vector4()) },
