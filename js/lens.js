@@ -25,6 +25,7 @@ uniform int uNn;
 uniform vec4 uNa[MAXN]; uniform vec4 uNb[MAXN]; uniform vec4 uNc[MAXN]; uniform vec4 uNg[MAXN]; uniform vec4 uNt[MAXN];
 uniform sampler2D uScreenTex, uBlurTex, uGlyphTex, uFishTex;
 uniform float uFishOn;
+uniform float uMeshL, uMeshT; uniform vec3 uMeshC0, uMeshC1, uMeshC2, uMeshC3;
 uniform float uBlurK, uPickLod, uRefr, uEdge, uMag, uDispL, uLip, uFrostL, uVibL, uBrightL, uBelow, uTintAmt, uRimL, uRimW, uLensK, uIconTint;
 uniform vec4 uGlyphCell;
 uniform float uHasGlyph, uGlyphHalf, uGlyphScale, uGlyphA, uGlyphOpacity, uLodGlyph, uInk, uFlip;
@@ -77,6 +78,14 @@ void addGlyph(inout vec3 col, vec2 p, vec2 o, float gh, vec4 cell, float ink, fl
     gc = mix(mix(vec3(0.09), vec3(1.0), ink), gc, smoothstep(0.1, 0.32, sat));
   }
   col = mix(col, gc, c.a * alpha);
+}
+
+// 網格漸層：兩個被扭曲的波決定四個角色的雙線性混合（紫↔藍、桃紅↔青），慢慢流動
+vec3 meshCol(vec2 q, float t) {
+  vec2 w = q + 0.55 * vec2(sin(q.y * 1.7 + t * 0.53), sin(q.x * 1.3 - t * 0.41));
+  float a = smoothstep(0.12, 0.88, 0.5 + 0.5 * sin(w.x * 1.15 + t * 0.37));
+  float b = smoothstep(0.12, 0.88, 0.5 + 0.5 * sin(w.y * 1.05 - t * 0.29 + 1.3));
+  return mix(mix(uMeshC0, uMeshC1, a), mix(uMeshC2, uMeshC3, a), b);
 }
 
 float noise(vec2 q) { return fract(52.9829189 * fract(dot(q, vec2(0.06711056, 0.00583715)))); }
@@ -163,6 +172,15 @@ void main() {
   col *= mix(vec3(1.0), mix(vec3(1.0), hue, 0.5), uBelow * 0.25);
   col *= mix(vec3(1.0), tint, uIconTint);                // 每顆圖示自己的玻璃色
   col = mix(col, uTintCol * (0.45 + 0.75 * dot(col, LUM)), uTintAmt);
+  // 漸層玻璃（參考 x6sense 的 3D 網格漸層玻璃）：本體裡有一團流動的漸層，亮度跟著底下透出來的明暗走，
+  // 斜面比中間亮（參考圖邊緣 L 0.83–0.85、中間 0.74）；大塊的托盤、面板淡一些。用螢幕座標，融合的玻璃之間顏色連續
+  if (uMeshL > 0.001) {
+    float edgeK = 1.0 - 1.0 / sqrt(1.0 + slope * slope);
+    vec3 m = meshCol((uCenter + p) / (24.0 * uS), uMeshT);
+    vec3 body = m * (0.85 + 0.5 * dot(col, LUM)) + 0.14 * edgeK;   // 參考的顏色藍色通道是滿的（HLS 飽和 1.0、亮度 0.72），乘到超過 1 再夾住
+    float amt = uMeshL * (0.92 + 0.08 * edgeK) * mix(1.0, 0.45, smoothstep(1.05, 1.3, sizeK));
+    col = mix(col, clamp(body, 0.0, 1.0), amt);
+  }
   col += uBrightL;
   col = mix(col, vec3(0.975), solid);                    // 控制元件的滑塊：靜止是白色實心，按下才變玻璃
 

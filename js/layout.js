@@ -44,7 +44,7 @@ export const BUBBLES = [
 ].map((b, i) => ({ ...b, cell: APPS.length + i, tint: [1, 1, 1], flip: FLIP.has(b.id) }));
 
 export const MENU_ROWS = ['編輯', '玻璃', '控制頁', '重設'];
-export const SEGMENTS = ['液態', '清透', '3D'];
+export const SEGMENTS = ['液態', '清透', '漸層', '3D'];
 
 // W×H 螢幕、上下安全區 → 格位。grid(i) = 第 i 個主畫面格位；dockSlot(i, n) = Dock 裡 n 顆時第 i 顆（置中排）
 export function computeLayout(W, H, safeTop, safeBottom) {

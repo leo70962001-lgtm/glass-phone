@@ -26,6 +26,7 @@ const DEFAULTS = {
   lBlur: 6, lFrost: 0.1, lVib: 1.35, lBright: 0.02, lDim: 0, lAppear: 'auto',
   lBelow: 0.35, lTint: 0, lTintC: '#e8593c', lIconTint: 0.5,
   lRim: 0.7, lRimW: 1.4, lAngle: 135, lShadow: 0.3,
+  lMesh: 0, lMeshSpeed: 1,                       // 漸層玻璃：玻璃本體裡流動的網格漸層
   // 3D 模式
   thickness: 18, bevel: 12, radius: 17, dome: 1.5,
   ior: 1.5, dispersion: 0.35, frost: 0.03, vibrancy: 1, absorb: 0.6, inner: 0.9, haze: 0.12,
@@ -52,6 +53,7 @@ const PRESETS = {
   '霧面': LENS({ lRefr: 8, lEdge: 12, lDisp: 0, lBlur: 22, lFrost: 0.3, lVib: 1.4, lBright: 0.04, lBelow: 0.6, lRim: 0.35, lRimW: 1, lShadow: 0.25, merge: 14 }),
   '素透鏡': LENS({ lRefr: 26, lEdge: 22, lMag: 1.06, lDisp: 0, lSize: false, lBlur: 0, lFrost: 0, lVib: 1, lBright: 0, lAppear: 'light', lBelow: 0, lRim: 0.5, lRimW: 1, lShadow: 0.15, merge: 14 }),
   '稜鏡': LENS({ lRefr: 30, lEdge: 30, lMag: 1.1, lDisp: 0.85, lSize: false, lBlur: 0, lFrost: 0, lVib: 1.2, lAppear: 'light', lBelow: 0, lRim: 0.9, lRimW: 1.6, lShadow: 0.25, merge: 20 }),
+  '漸層玻璃': LENS({ lMesh: 0.95, lMeshSpeed: 1.4, lRefr: 30, lEdge: 26, lMag: 1.08, lDisp: 0.25, lBlur: 2, lFrost: 0, lVib: 1.1, lBright: 0, lAppear: 'light', lBelow: 0, lIconTint: 0, lRim: 0.95, lRimW: 1.8, lShadow: 0.35, merge: 18 }),
   '3D 厚玻璃': { mode: 'ray' },
   '3D 厚透鏡': { mode: 'ray', thickness: 22, bevel: 18, radius: 20, dome: 5, ior: 1.6, dispersion: 0.35, vibrancy: 1.15, glyphDepth: 0.85, caustic: 1.2, trayThickness: 10 },
   '3D 稜鏡': { mode: 'ray', thickness: 14, bevel: 14, radius: 18, dome: 1, ior: 1.55, dispersion: 1.4, vibrancy: 1.25, glyphDepth: 0.85, rainbow: 1, caustic: 1.6, star: 0.8, trayThickness: 8 },
@@ -61,7 +63,7 @@ const PRESETS = {
   '3D 霧面': { mode: 'ray', thickness: 10, bevel: 5, frost: 0.55, dispersion: 0.15, glyphDepth: 0.5, caustic: 0.5, star: 0.2, rim: 1.3 },
   '3D 水晶塊': { mode: 'ray', thickness: 30, bevel: 4, radius: 12, dome: 0, ior: 1.75, dispersion: 0.9, absorb: 0.4, glyphDepth: 0.1, inner: 1.0, caustic: 1.8, star: 1.0, depth3d: 1.4 },
 };
-const SEG_PRESETS = ['液態玻璃', '清透', '3D 厚玻璃'];   // 第二頁分段控制對應的預設
+const SEG_PRESETS = ['液態玻璃', '清透', '漸層玻璃', '3D 厚玻璃'];   // 第二頁分段控制對應的預設
 
 // 存在這支手機上的狀態：預設、刪了哪些、排列、浮動玻璃的位置
 const PRESET_KEY = 'glassHome.preset', REMOVED_KEY = 'glassHome.removed', ORDER_KEY = 'glassHome.order', MENU_KEY = 'glassHome.menu', NEW_KEY = 'glassHome.new';
@@ -141,7 +143,7 @@ const pyramid = createPyramid(renderer), basePyramid = createPyramid(renderer);
 const tone = createTone(renderer);
 const fish = createFish(renderer);
 const plants = createPlants(renderer);
-let plantT = 0, plantAt = 0;
+let plantT = 0, plantAt = 0, meshT = 0, meshAt = 0;
 scene.add(fish.gap);
 let baseRT = null;                     // 面板蓋到圖示時，下層先畫進這一張，面板才模糊得到圖示
 
@@ -165,6 +167,9 @@ const shared = {
   uFrostL: U(0.1), uVibL: U(1.3), uBrightL: U(0), uBelow: U(0.3), uTintAmt: U(0), uTintCol: U(new THREE.Vector3(1, 0.4, 0.2)),
   uRimL: U(0.7), uRimW: U(1.4), uLensK: U(1), uIconTint: U(0.5),
   uFishTex: U(null), uFishOn: U(0),
+  // 漸層玻璃的四個顏色（sRGB，量自參考影片）：紫、藍、桃紅、青
+  uMeshL: U(0), uMeshT: U(0), uMeshC0: U(new THREE.Vector3(0.486, 0.275, 0.988)), uMeshC1: U(new THREE.Vector3(0.18, 0.58, 1)),
+  uMeshC2: U(new THREE.Vector3(0.835, 0.36, 1)), uMeshC3: U(new THREE.Vector3(0.24, 0.737, 1)),
 };
 
 // 每塊玻璃的狀態：按壓、刪除／消散、位置、果凍形變、明暗、抖動相位（重建玻璃材質時沿用）
@@ -191,7 +196,7 @@ const TRAY = newState({});
 const FX = {
   page: S(0), lensK: S(1), drift: S(0), rowsA: S(0), pillA: S(1),
   on1: S(P.animateWall ? 1 : 0), on2: S(P.parallax ? 1 : 0),
-  seg: [S(1), S(1), S(1)],
+  seg: SEGMENTS.map(() => S(1)),
 };
 
 // 主畫面與 Dock 的排列（拖曳換位後存起來）
@@ -232,8 +237,8 @@ function buildGlass() {
     const own = { uTint: U(new THREE.Vector3(1, 1, 1)), uGlyphCell: U(cellOf(d.app.cell)), uFlip: U(d.app.flip ? 1 : 0), uHasGlyph: U(d.app.glyph ? 1 : 0) };
     if (lens) {
       own.uScreenTex = U(screen.texture); own.uBlurTex = U(null);       // 上層玻璃：可能改取樣下層畫好的那一張
-      if (d.app.kind === 'knob') Object.assign(own, { uRefr: U(24), uBlurK: U(0), uFrostL: U(0.04), uLip: U(d.app.id === 'seg' ? 0 : 1) });   // 滑塊是比較清的透鏡
-      if (d === LENS_W) own.uMag = U(1.15);
+      if (d.app.kind === 'knob') Object.assign(own, { uRefr: U(24), uBlurK: U(0), uFrostL: U(0.04), uLip: U(d.app.id === 'seg' ? 0 : 1), uMeshL: U(0) });   // 滑塊是比較清的透鏡
+      if (d === LENS_W) { own.uMag = U(1.15); own.uMeshL = U(0); }   // 放大鏡保持透明
     } else own.uGlyphOpacity = U(1);
     const m = make(own);
     m.renderOrder = 3; m.userData = d; d.mesh = m; m.visible = !d.hidden;
@@ -508,6 +513,7 @@ function sync() {
     shared.uFrostL.value = P.lFrost; shared.uVibL.value = P.lVib; shared.uBrightL.value = P.lBright; shared.uBelow.value = P.lBelow;
     shared.uTintAmt.value = P.lTint; hexGamma(P.lTintC, shared.uTintCol.value); shared.uIconTint.value = P.lIconTint;
     shared.uRimL.value = P.lRim; shared.uRimW.value = P.lRimW * s; shared.uS.value = s; shared.uPx.value = pr;
+    shared.uMeshL.value = P.lMesh;
     shared.uTexel.value.set(1 / screen.width, 1 / screen.height);
     shared.uBlurK.value = P.lBlur * pr / SIGMA0;
     shared.uPickLod.value = Math.max(0, Math.log2(12 * s * pr / SIGMA0));
@@ -538,6 +544,8 @@ function measureTones(snap = false) {
   if (!isLens() || !tone.ready) return;
   const dimK = screen.uniforms.uDim.value;
   const judge = (st, x, y, hx, hy, panelLike) => {
+    // 漸層玻璃：小玻璃本身是飽和的紫藍色，圖案一律用白色
+    if (P.lMesh > 0.3 && Math.min(hx, hy) * 2 <= 96 * L.s) { st.tone.t = 0; st.ink.t = 1; if (snap) { snapS(st.tone); snapS(st.ink); } return; }
     const lum = tone.under(x, y, hx, hy, L.W, L.H);
     let t;
     if (P.lAppear === 'light') t = 0;
@@ -678,6 +686,9 @@ fLight.add(P, 'lRim', 0, 1.5, 0.01).name('邊緣光').onChange(sync);
 fLight.add(P, 'lRimW', 0.3, 12, 0.1).name('邊緣光寬 (pt)').onChange(sync);
 fLight.add(P, 'lAngle', -180, 180, 1).name('光源角度（135° = 左上）').onChange(() => (needsRender = true));
 fLight.add(P, 'lShadow', 0, 1, 0.01).name('陰影').onChange(sync);
+const fMesh = gui.addFolder('漸層玻璃');
+fMesh.add(P, 'lMesh', 0, 1, 0.01).name('漸層濃度').onChange(sync);
+fMesh.add(P, 'lMeshSpeed', 0, 3, 0.05).name('流動速度');
 
 const fGlass = gui.addFolder('3D 玻璃');
 fGlass.add(P, 'thickness', 1, 40, 0.5).name('玻璃厚度 (pt)').onChange(() => { sync(); placeKnobs(); });
@@ -715,12 +726,12 @@ f3d.add(P, 'spec', 0, 3, 0.01).name('鏡面高光').onChange(sync);
 f3d.add(P, 'env', 0, 3, 0.01).name('環境亮度').onChange(sync);
 function showFolders() {
   const lens = isLens();
-  for (const f of [fLens, fSurf, fTint, fLight]) f.show(lens);
+  for (const f of [fLens, fSurf, fTint, fLight, fMesh]) f.show(lens);
   for (const f of [fGlass, f3d]) f.show(!lens);
 }
 showFolders();
 for (const f of [fPreset]) f.open();
-for (const f of [fLiquid, fLens, fSurf, fTint, fLight, fGlass, f3d]) f.close();
+for (const f of [fLiquid, fLens, fSurf, fTint, fLight, fMesh, fGlass, f3d]) f.close();
 
 const fView = gui.addFolder('體感視差');
 fView.add(P, 'parallax').name(MOBILE ? '陀螺儀／拖曳視差' : '滑鼠視差').onChange(() => { placeKnobs(); FX.on2.t = P.parallax ? 1 : 0; });
@@ -929,7 +940,7 @@ function placeWidgets(snap) {
     LENS_W.goal.set(c.lens.x, c.lens.y); LENS_W.cur.copy(LENS_W.goal);
   }
 }
-const SEG_NOW = () => { const i = SEG_PRESETS.indexOf(curPreset); return i >= 0 ? i : (isLens() ? 0 : 2); };
+const SEG_NOW = () => { const i = SEG_PRESETS.indexOf(curPreset); return i >= 0 ? i : (isLens() ? 0 : SEG_PRESETS.length - 1); };
 const sliderValue = () => (isLens() ? clamp(P.lRefr / 60, 0, 1) : clamp((P.thickness - 1) / 39, 0, 1));
 function setSlider(v) {
   if (isLens()) P.lRefr = Math.round(v * 120) / 2; else P.thickness = Math.round(1 + v * 78) / 2;
@@ -1611,6 +1622,11 @@ function step(now) {
     const moving = P.animateWall && !reduced.matches;
     if (moving) plantT += dt;
     if ((moving || plants.fading) && now - plantAt > 41) screenDirty = true;
+  }
+  // 漸層玻璃流動：只重畫玻璃（螢幕層不用），最多每秒 30 次
+  if (isLens() && P.lMesh > 0 && P.animateWall && !reduced.matches) {
+    meshT += dt * P.lMeshSpeed; shared.uMeshT.value = meshT;
+    if (now - meshAt > 33) { meshAt = now; needsRender = true; }
   }
   if (screenDirty) needsRender = true;
   if (rec) needsRender = true;                                  // 錄影時每一幀都畫，影片才是均勻的
